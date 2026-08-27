@@ -9,9 +9,19 @@
     public class AcroFieldCommonInformation
     {
         /// <summary>
+        /// The indirect reference for this field, if it was defined as an indirect object.
+        /// </summary>
+        public IndirectReference? Reference { get; }
+
+        /// <summary>
         /// The reference to the field which is the parent of this one, if applicable.
         /// </summary>
         public IndirectReference? Parent { get; set; }
+
+        /// <summary>
+        /// The fully qualified field name built from the partial names of all ancestor fields and this field.
+        /// </summary>
+        public string? FullyQualifiedName { get; }
 
         /// <summary>
         /// The partial field name for this field. The fully qualified field name is the
@@ -33,9 +43,17 @@
         /// <summary>
         /// Create a new <see cref="AcroFieldCommonInformation"/>.
         /// </summary>
-        public AcroFieldCommonInformation(IndirectReference? parent, string? partialName, string? alternateName, string? mappingName)
+        /// <param name="reference">The field reference, if any.</param>
+        /// <param name="parent">The parent field reference, if any.</param>
+        /// <param name="fullyQualifiedName">The fully qualified field name, if known.</param>
+        /// <param name="partialName">The partial field name for this field, if any.</param>
+        /// <param name="alternateName">The alternate field name, if any.</param>
+        /// <param name="mappingName">The export mapping name, if any.</param>
+        public AcroFieldCommonInformation(IndirectReference? parent, string? fullyQualifiedName, string? partialName, string? alternateName, string? mappingName, IndirectReference? reference = null)
         {
+            Reference = reference;
             Parent = parent;
+            FullyQualifiedName = fullyQualifiedName;
             PartialName = partialName;
             AlternateName = alternateName;
             MappingName = mappingName;
@@ -62,12 +80,23 @@
             }
 
             var s = string.Empty;
+
+            if (Reference != null)
+            {
+                s += $"Reference: {Reference}.";
+            }
             
             if (Parent != null)
             {
+                if (s.Length > 0)
+                {
+                    s += " ";
+                }
+
                 s += $"Parent: {Parent}.";
             }
 
+            s = AppendIfNotNull(FullyQualifiedName, "Fully Qualified Name", s);
             s = AppendIfNotNull(PartialName, "Partial Name", s);
             s = AppendIfNotNull(AlternateName, "Alternate Name", s);
             s = AppendIfNotNull(MappingName, "Mapping Name", s);

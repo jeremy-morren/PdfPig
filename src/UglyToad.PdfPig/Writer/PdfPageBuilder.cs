@@ -117,6 +117,8 @@
         /// </summary>
         public int PageNumber { get; }
 
+        internal IndirectReferenceToken PageReference { get; }
+
         /// <summary>
         /// The current size of the page.
         /// </summary>
@@ -132,10 +134,11 @@
         /// </summary>
         public IReadOnlyList<IContentStream> ContentStreams => contentStreams;
 
-        internal PdfPageBuilder(int number, PdfDocumentBuilder documentBuilder)
+        internal PdfPageBuilder(int number, PdfDocumentBuilder documentBuilder, IndirectReferenceToken pageReference)
         {
             this.documentBuilder = documentBuilder ?? throw new ArgumentNullException(nameof(documentBuilder));
             PageNumber = number;
+            PageReference = pageReference ?? throw new ArgumentNullException(nameof(pageReference));
 
             currentStream = new DefaultContentStream();
             contentStreams = new List<IPageContentStream>() { currentStream };
@@ -146,11 +149,13 @@
             PdfDocumentBuilder documentBuilder,
             IEnumerable<CopiedContentStream> copied,
             Dictionary<NameToken, IToken> pageDict,
-            List<(DictionaryToken token, PdfAction action)> links)
+            List<(DictionaryToken token, PdfAction action)> links,
+            IndirectReferenceToken pageReference)
         {
             this.documentBuilder = documentBuilder ?? throw new ArgumentNullException(nameof(documentBuilder));
             this.links = links;
             PageNumber = number;
+            PageReference = pageReference ?? throw new ArgumentNullException(nameof(pageReference));
             pageDictionary = pageDict;
             contentStreams = new List<IPageContentStream>(copied);
 

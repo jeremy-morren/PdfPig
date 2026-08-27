@@ -21,6 +21,24 @@ internal static class StreamExtensions
             ArrayPool<byte>.Shared.Return(buffer);
         }
     }
+    
+    public static int Read(this Stream stream, Span<byte> buffer)
+    {
+        var tempBuffer = ArrayPool<byte>.Shared.Rent(buffer.Length);
+
+        try
+        {
+            int read = stream.Read(tempBuffer, 0, buffer.Length);
+
+            tempBuffer.AsSpan(0, read).CopyTo(buffer);
+
+            return read;
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(tempBuffer);
+        }
+    }
 }
 
 #endif

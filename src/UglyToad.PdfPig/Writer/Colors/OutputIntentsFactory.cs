@@ -39,7 +39,7 @@
                     {NameToken.RegistryName, new StringToken(RegistryName)},
                     {NameToken.Info, rgbColorCondition},
                     {NameToken.DestOutputProfile, written}
-                }), 
+                }),
             });
         }
     }

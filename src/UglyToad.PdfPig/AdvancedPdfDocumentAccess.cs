@@ -92,7 +92,7 @@
         /// <param name="replacer">Func that takes existing token as input and return new token.</param>
         public void ReplaceIndirectObject(IndirectReference reference, Func<IToken, IToken> replacer)
         {
-            var obj = pdfScanner.Get(reference);
+            var obj = pdfScanner.Get(reference)!;
             var replacement = replacer(obj.Data);
             pdfScanner.ReplaceToken(reference, replacement);
         }
@@ -107,6 +107,13 @@
         {
             pdfScanner.ReplaceToken(reference, replacement);
         }
+
+        /// <summary>
+        /// Gets the token value, using the scanner if it is a <see cref="IndirectReferenceToken"/>.
+        /// </summary>
+        /// <param name="token">The token to find</param>
+        public T FindDirectObject<T>(IToken token) where T : class, IToken =>
+            DirectObjectFinder.Get<T>(token, pdfScanner);
 
         private void GuardDisposed()
         {

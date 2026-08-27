@@ -17,7 +17,7 @@
         /// <param name="s">The pdf formated date string, e.g. D:199812231952-08'00.</param>
         /// <param name="offset">The parsed date.</param>
         /// <returns>True if parsed.</returns>
-        public static bool TryParseDateTimeOffset(string s, out DateTimeOffset offset)
+        public static bool TryParseDateTimeOffset(string? s, out DateTimeOffset offset)
         {
             offset = DateTimeOffset.MinValue;
 

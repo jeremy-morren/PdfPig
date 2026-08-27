@@ -30,7 +30,7 @@ public class XrefTableParserTests
                 { new IndirectReference(14, 0), 576 },
             });
 
-        Assert.Equal(table.Offset, 0);
+        Assert.Equal(0, table.Offset);
 
         Assert.NotNull(table.Dictionary);
     }
@@ -56,7 +56,7 @@ public class XrefTableParserTests
                 { new IndirectReference(13, 0), 443 }
             });
 
-        Assert.Equal(table.Offset, 0);
+        Assert.Equal(0, table.Offset);
 
         Assert.NotNull(table.Dictionary);
     }
@@ -85,7 +85,7 @@ public class XrefTableParserTests
                 { new IndirectReference(21, 0), 2122},
             });
 
-        Assert.Equal(table.Offset, 0);
+        Assert.Equal(0, table.Offset);
 
         Assert.Null(table.Dictionary);
     }
@@ -128,7 +128,7 @@ public class XrefTableParserTests
                 { new IndirectReference(12, 0), 576 },
             });
 
-        Assert.Equal(table.Offset, 0);
+        Assert.Equal(0, table.Offset);
         Assert.NotNull(table.Dictionary);
     }
 

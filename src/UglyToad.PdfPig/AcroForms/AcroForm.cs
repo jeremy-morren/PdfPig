@@ -5,6 +5,7 @@
     using System.Linq;
     using Core;
     using Fields;
+    using System.Diagnostics.CodeAnalysis;
     using Tokens;
 
     /// <summary>
@@ -22,6 +23,11 @@
         /// The raw PDF dictionary which is the root form object.
         /// </summary>
         public DictionaryToken Dictionary { get; }
+
+        /// <summary>
+        /// The indirect reference for the root AcroForm object, if it was defined as an indirect object.
+        /// </summary>
+        public IndirectReference? Reference { get; }
 
         /// <summary>
         /// Document-level characteristics related to signature fields.
@@ -42,13 +48,43 @@
         /// Create a new <see cref="AcroForm"/>.
         /// </summary>
         internal AcroForm(DictionaryToken dictionary, SignatureFlags signatureFlags, bool needAppearances,
-            IReadOnlyDictionary<IndirectReference, AcroFieldBase> fieldsWithReferences)
+            IReadOnlyDictionary<IndirectReference, AcroFieldBase> fieldsWithReferences,
+            IndirectReference? reference = null)
         {
             Dictionary = dictionary ?? throw new ArgumentNullException(nameof(dictionary));
+            Reference = reference;
             SignatureFlags = signatureFlags;
             NeedAppearances = needAppearances;
             this.fieldsWithReferences = fieldsWithReferences ?? throw new ArgumentNullException(nameof(fieldsWithReferences));
             Fields = fieldsWithReferences.Values.ToList();
+        }
+
+        /// <summary>
+        /// Attempt to get a form field by its indirect reference.
+        /// </summary>
+        public bool TryGetField(IndirectReference reference, [NotNullWhen(true)] out AcroFieldBase? field)
+        {
+            if (fieldsWithReferences.TryGetValue(reference, out field))
+            {
+                return true;
+            }
+
+            field = EnumerateFields(Fields).FirstOrDefault(x => x.Information.Reference == reference);
+            return field != null;
+        }
+
+        /// <summary>
+        /// Attempt to get a form field by its fully qualified field name.
+        /// </summary>
+        public bool TryGetField(string fullyQualifiedName, [NotNullWhen(true)] out AcroFieldBase? field)
+        {
+            if (string.IsNullOrWhiteSpace(fullyQualifiedName))
+            {
+                throw new ArgumentException("A fully qualified field name must be provided.", nameof(fullyQualifiedName));
+            }
+
+            field = EnumerateFields(Fields).FirstOrDefault(x => string.Equals(x.Information.FullyQualifiedName, fullyQualifiedName, StringComparison.Ordinal));
+            return field != null;
         }
 
         /// <summary>
@@ -79,6 +115,22 @@
         public override string ToString()
         {
             return Dictionary.ToString();
+        }
+
+        private static IEnumerable<AcroFieldBase> EnumerateFields(IEnumerable<AcroFieldBase> fields)
+        {
+            foreach (var field in fields)
+            {
+                yield return field;
+
+                if (field is AcroNonTerminalField parent)
+                {
+                    foreach (var child in EnumerateFields(parent.Children))
+                    {
+                        yield return child;
+                    }
+                }
+            }
         }
     }
 }

@@ -22,7 +22,7 @@
             where T : class, IToken
         {
             token = default;
-            if (!dictionary.TryGet(name, out var t) || !(t is T typedToken))
+            if (!dictionary.TryGet(name, out var t) || t is not T typedToken)
             {
                 if (t is IndirectReferenceToken reference)
                 {
@@ -127,21 +127,23 @@
         /// Returns an equivalent token where any indirect references of child objects are
         /// recursively traversed and resolved.
         /// </summary>
+        [return: NotNullIfNotNull(nameof(token))]
         internal static T? Resolve<T>(this T? token, IPdfTokenScanner scanner, HashSet<IndirectReference>? visited = null) where T : IToken
         {
-            return (T?)ResolveInternal(token, scanner, visited ?? []);
+            return (T?)token.ResolveInternal(scanner, visited ?? []);
         }
 
+        [return: NotNullIfNotNull(nameof(token))]
         private static IToken? ResolveInternal(this IToken? token, IPdfTokenScanner scanner, HashSet<IndirectReference> visited)
         {
             if (token is StreamToken stream)
             {
-                return new StreamToken(Resolve(stream.StreamDictionary, scanner, visited), stream.Data);
+                return new StreamToken(stream.StreamDictionary.Resolve(scanner, visited), stream.Data);
             }
 
             if (token is DictionaryToken dict)
             {
-                var resolvedItems = new Dictionary<NameToken, IToken>();
+                var resolvedItems = new Dictionary<NameToken, IToken?>();
                 foreach (var kvp in dict.Data)
                 {
                     var value = kvp.Value;
@@ -154,7 +156,7 @@
                         value = scanner.Get(reference.Data)?.Data;
                         visited.Add(reference.Data);
                     }
-                    resolvedItems[NameToken.Create(kvp.Key)] = ResolveInternal(value, scanner, visited);
+                    resolvedItems[NameToken.Create(kvp.Key)] = value.ResolveInternal(scanner, visited);
                 }
 
                 if (resolvedItems.Count != dict.Data.Count)
@@ -169,7 +171,7 @@
                     {
                         if (dict.Data[missing] is IndirectReferenceToken reference)
                         {
-                            resolvedItems[NameToken.Create(missing)] = ResolveInternal(reference, scanner, visited);
+                            resolvedItems[NameToken.Create(missing)] = reference.ResolveInternal(scanner, visited);
                         }
                     }
                 }
@@ -179,11 +181,11 @@
 
             if (token is ArrayToken arr)
             {
-                var resolvedItems = new List<IToken>();
+                var resolvedItems = new List<IToken?>();
                 for (int i = 0; i < arr.Length; i++)
                 {
                     var value = arr.Data[i] is IndirectReferenceToken reference ? scanner.Get(reference.Data)?.Data : arr.Data[i];
-                    resolvedItems.Add(ResolveInternal(value, scanner, visited));
+                    resolvedItems.Add(value.ResolveInternal(scanner, visited));
                 }
                 return new ArrayToken(resolvedItems);
             }

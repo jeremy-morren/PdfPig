@@ -1,6 +1,7 @@
 ﻿namespace UglyToad.PdfPig.Core
 {
     using System;
+    using System.Diagnostics.CodeAnalysis;
     using System.Text;
 
     /// <summary>
@@ -16,6 +17,7 @@
         /// <summary>
         /// Convert the string to bytes using the ISO 8859-1 encoding.
         /// </summary>
+        [return: NotNullIfNotNull(nameof(s))]
         public static byte[]? StringAsLatin1Bytes(string? s)
         {
             if (s == null)

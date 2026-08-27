@@ -112,11 +112,15 @@ internal static partial class FirstPassParser
             }
         }
 
+        var latestCrossReferenceOffset = startXrefLocation.StartXRefDeclaredOffset
+            ?? orderedXrefs.OrderByDescending(x => x.Offset).First().Offset;
+
         var result = new FirstPassResults(
             streamsAndTables.ToList(),
             bruteForceOffsets,
             flattenedOffsets,
-            lastTrailer ?? bruteForceTrailer);
+            lastTrailer ?? bruteForceTrailer,
+            latestCrossReferenceOffset);
 
         return result;
     }
@@ -242,15 +246,22 @@ internal class FirstPassResults
     /// </summary>
     public DictionaryToken? Trailer { get; }
 
+    /// <summary>
+    /// The byte offset pointed to by the leaf <c>startxref</c> entry.
+    /// </summary>
+    public long LatestCrossReferenceOffset { get; }
+
     public FirstPassResults(
         IReadOnlyList<IXrefSection> parts,
         IReadOnlyDictionary<IndirectReference, XrefLocation>? bruteForceOffsets,
         IReadOnlyDictionary<IndirectReference, XrefLocation> xrefOffsets,
-        DictionaryToken? trailer)
+        DictionaryToken? trailer,
+        long latestCrossReferenceOffset)
     {
         Parts = parts;
         BruteForceOffsets = bruteForceOffsets;
         XrefOffsets = xrefOffsets;
         Trailer = trailer;
+        LatestCrossReferenceOffset = latestCrossReferenceOffset;
     }
 }

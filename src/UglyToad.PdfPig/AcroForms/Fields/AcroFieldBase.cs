@@ -65,7 +65,7 @@
             RawFieldType = rawFieldType ?? throw new ArgumentNullException(nameof(rawFieldType));
             FieldFlags = fieldFlags;
             FieldType = fieldType;
-            Information = information ?? new AcroFieldCommonInformation(null, null, null, null);
+            Information = information ?? new AcroFieldCommonInformation(null, null, null, null, null);
             PageNumber = pageNumber;
             Bounds = bounds;
         }

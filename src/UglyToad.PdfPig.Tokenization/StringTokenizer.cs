@@ -41,8 +41,12 @@
             short[] octal = { 0, 0, 0 };
             var octalsRead = 0;
 
+            var serializedLength = 1;
+            
             while (inputBytes.MoveNext())
             {
+                serializedLength++;
+
                 var b = inputBytes.CurrentByte;
                 var c = (char)b;
 
@@ -218,7 +222,7 @@
 
             builder.Clear();
 
-            token = new StringToken(tokenStr, encodedWith);
+            token = new StringToken(tokenStr, encodedWith, serializedLength);
 
             return true;
         }

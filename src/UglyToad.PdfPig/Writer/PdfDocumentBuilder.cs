@@ -17,6 +17,7 @@ namespace UglyToad.PdfPig.Writer
     using PdfPig.Fonts.TrueType.Parser;
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics;
     using System.IO;
     using System.Linq;
     using System.Runtime.CompilerServices;
@@ -31,7 +32,9 @@ namespace UglyToad.PdfPig.Writer
     {
         private readonly IPdfStreamWriter context;
         private readonly Dictionary<int, PdfPageBuilder> pages = new Dictionary<int, PdfPageBuilder>();
+        private readonly Dictionary<int, IndirectReferenceToken> pageObjectReferences = new Dictionary<int, IndirectReferenceToken>();
         private readonly Dictionary<Guid, FontStored> fonts = new Dictionary<Guid, FontStored>();
+        private readonly Dictionary<NameToken, IToken> additionalCatalogEntries = new Dictionary<NameToken, IToken>();
         private bool completed = false;
         private int fontId = 0;
         private double version = 1.7;
@@ -240,12 +243,12 @@ namespace UglyToad.PdfPig.Writer
             {
                 if (!pages.ContainsKey(i + 1))
                 {
-                    builder = new PdfPageBuilder(i + 1, this);
+                    builder = new PdfPageBuilder(i + 1, this, ReservePageReference(i + 1));
                     break;
                 }
             }
 
-            builder ??= new PdfPageBuilder(pages.Count + 1, this);
+            builder ??= new PdfPageBuilder(pages.Count + 1, this, ReservePageReference(pages.Count + 1));
 
             builder.PageSize = new PdfRectangle(0, 0, width, height);
             pages[builder.PageNumber] = builder;
@@ -291,9 +294,11 @@ namespace UglyToad.PdfPig.Writer
             return WriterUtil.CopyToken(context, token, source, refs);
         }
 
-        private sealed class PageInfo(DictionaryToken page, IReadOnlyList<DictionaryToken> parents)
+        private sealed class PageInfo(DictionaryToken page, IndirectReference reference, IReadOnlyList<DictionaryToken> parents)
         {
             public DictionaryToken Page { get; } = page;
+
+            public IndirectReference Reference { get; } = reference;
 
             public IReadOnlyList<DictionaryToken> Parents { get; } = parents;
         }
@@ -332,9 +337,9 @@ namespace UglyToad.PdfPig.Writer
             {
                 pagesInfos = new Dictionary<int, PageInfo>();
                 int i = 1;
-                foreach (var (pageDict, parents) in WriterUtil.WalkTree(document.Structure.Catalog.Pages.PageTree))
+                foreach (var (pageNode, parents) in WriterUtil.WalkTree(document.Structure.Catalog.Pages.PageTree))
                 {
-                    pagesInfos[i] = new PageInfo(pageDict, parents);
+                    pagesInfos[i] = new PageInfo(pageNode.NodeDictionary, pageNode.Reference, parents);
                     i++;
                 }
 
@@ -345,6 +350,10 @@ namespace UglyToad.PdfPig.Writer
             {
                 throw new KeyNotFoundException($"Page {pageNumber} was not found in the source document.");
             }
+
+            var newPageNumber = pages.Count + 1;
+            var newPageReference = ReservePageReference(newPageNumber);
+            refs[pageInfo.Reference] = newPageReference;
 
             var page = document.GetPage(pageNumber);
             var pcp = new PageContentParser(ReflectionGraphicsStateOperationFactory.Instance, StackDepthGuard.Infinite, true);
@@ -476,7 +485,7 @@ namespace UglyToad.PdfPig.Writer
 
             copiedPageDict[NameToken.Resources] = new DictionaryToken(resources);
 
-            var builder = new PdfPageBuilder(pages.Count + 1, this, streams, copiedPageDict, links);
+            var builder = new PdfPageBuilder(newPageNumber, this, streams, copiedPageDict, links, newPageReference);
             pages[builder.PageNumber] = builder;
             return builder;
 
@@ -497,7 +506,7 @@ namespace UglyToad.PdfPig.Writer
                         if (item.Value is IndirectReferenceToken ir)
                         {
                             // convert indirect to direct as PdfPageBuilder needs to modify resource entries
-                            var obj = document.Structure.TokenScanner.Get(ir.Data);
+                            var obj = document.Structure.TokenScanner.Get(ir.Data)!;
                             if (obj.Data is StreamToken)
                             {
                                 // rare case, have seen /SubType as stream token, can't make direct
@@ -524,7 +533,7 @@ namespace UglyToad.PdfPig.Writer
                         if (item.Value is IndirectReferenceToken ir)
                         {
                             // convert indirect to direct as PdfPageBuilder needs to modify resource entries
-                            destinationDict[key] = WriterUtil.CopyToken(context, document.Structure.TokenScanner.Get(ir.Data).Data, document.Structure.TokenScanner, refs);
+                            destinationDict[key] = WriterUtil.CopyToken(context, document.Structure.TokenScanner.Get(ir.Data)!.Data, document.Structure.TokenScanner, refs);
                         }
                         else
                         {
@@ -553,19 +562,13 @@ namespace UglyToad.PdfPig.Writer
                 }
             }
 
-            DictionaryToken? GetRemoteDict(IToken token)
-            {
-                DictionaryToken? dict = null;
-                if (token is IndirectReferenceToken ir)
+            DictionaryToken? GetRemoteDict(IToken token) =>
+                token switch
                 {
-                    dict = document.Structure.TokenScanner.Get(ir.Data).Data as DictionaryToken;
-                }
-                else if (token is DictionaryToken dt)
-                {
-                    dict = dt;
-                }
-                return dict;
-            }
+                    IndirectReferenceToken ir => document.Structure.TokenScanner.Get(ir.Data)?.Data as DictionaryToken,
+                    DictionaryToken dt => dt,
+                    _ => null
+                };
         }
 
         private IReadOnlyList<IToken> CopyAnnotationsFromPageSource(
@@ -748,7 +751,7 @@ namespace UglyToad.PdfPig.Writer
             }
 
             int leafNum = 0;
-            var pageReferences = pages.ToDictionary(p => p.Key, p => context.ReserveObjectNumber());
+            var pageReferences = pages.ToDictionary(p => p.Key, p => pageObjectReferences[p.Key]);
 
             foreach (var page in pages)
             {
@@ -856,6 +859,11 @@ namespace UglyToad.PdfPig.Writer
                 };
 
                 catalogDictionary[NameToken.Outlines] = context.WriteToken(new DictionaryToken(outline));
+            }
+
+            foreach (var additionalCatalogEntry in additionalCatalogEntries)
+            {
+                catalogDictionary[additionalCatalogEntry.Key] = additionalCatalogEntry.Value;
             }
 
             if (ArchiveStandard != PdfAStandard.None)
@@ -982,6 +990,37 @@ namespace UglyToad.PdfPig.Writer
                 new NumericToken(rectangle.TopRight.X),
                 new NumericToken(rectangle.TopRight.Y)
             ]);
+        }
+
+        private IndirectReferenceToken ReservePageReference(int pageNumber)
+        {
+            if (!pageObjectReferences.TryGetValue(pageNumber, out var pageReference))
+            {
+                pageReference = context.ReserveObjectNumber();
+                pageObjectReferences[pageNumber] = pageReference;
+            }
+
+            return pageReference;
+        }
+
+        internal IndirectReferenceToken WriteToken(IToken token)
+        {
+            return context.WriteToken(token);
+        }
+
+        internal IndirectReferenceToken ReserveObjectNumber()
+        {
+            return context.ReserveObjectNumber();
+        }
+
+        internal IndirectReferenceToken WriteToken(IToken token, IndirectReferenceToken reservedReference)
+        {
+            return context.WriteToken(token, reservedReference);
+        }
+
+        internal void AddCatalogEntry(NameToken name, IToken token)
+        {
+            additionalCatalogEntries[name] = token;
         }
 
         private IndirectReferenceToken[] CreateBookmarkTree(IReadOnlyList<BookmarkNode> nodes, Dictionary<int, IndirectReferenceToken> pageReferences, IndirectReferenceToken? parent)

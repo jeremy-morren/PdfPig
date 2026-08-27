@@ -37,6 +37,20 @@
         }
 
         [Theory]
+        [InlineData("<00>", 4)]
+        [InlineData("< AA 0F >", 9)]
+        [InlineData("<ABC>", 5)]
+        public void PreservesSerializedLength(string s, int expectedSerializedLength)
+        {
+            var input = StringBytesTestConverter.Convert(s);
+
+            var result = tokenizer.TryTokenize(input.First, input.Bytes, out var token);
+
+            Assert.True(result);
+            Assert.Equal(expectedSerializedLength, AssertHexToken(token).SerializedLength);
+        }
+
+        [Theory]
         [InlineData("<FEFF004C0069006200720065004F0066006600690063006500200036002E0031>", "LibreOffice 6.1")]
         [InlineData("<FEFF30533093306B3061306F4E16754C>", "こんにちは世界")]
         public void HandlesUtf16Strings(string s, string expected)

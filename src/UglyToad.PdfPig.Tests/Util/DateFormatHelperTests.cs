@@ -24,7 +24,7 @@
         ];
 
         [Theory]
-        [InlineData(default(string))]
+        [InlineData(default(string?))]
         [InlineData("")]
         [InlineData("D:")]
         [InlineData("D:FEHTR$54")]
@@ -37,7 +37,7 @@
         [InlineData("D:19993209")]
         [InlineData("D:19990750")]
         [InlineData("D:20100231")]
-        public void TryParseDateTimeOffset_InvalidInput_False(string input)
+        public void TryParseDateTimeOffset_InvalidInput_False(string? input)
         {
             var result = DateFormatHelper.TryParseDateTimeOffset(input, out _);
 

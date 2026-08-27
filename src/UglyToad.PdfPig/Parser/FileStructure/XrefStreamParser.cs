@@ -151,7 +151,7 @@ internal static class XrefStreamParser
     /// <summary>
     /// The provided offset can frequently be close but not quite correct.
     /// The 2 most common failure modes are that the PDF content starts at some
-    /// non-zero offset in the file so all content is shifted by <param name="fileHeaderOffset"/> bytes
+    /// non-zero offset in the file so all content is shifted by <paramref name="fileHeaderOffset"/> bytes
     /// or we're within a few bytes of the offset but not directly at it.
     /// </summary>
     private static (long correctOffset, XrefOffsetCorrection correctionType)? TryRecoverOffset(

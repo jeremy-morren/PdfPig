@@ -145,14 +145,14 @@
                 });
                 results = output.Build();
                 var pg = existing.GetPage(1);
-                var annots = pg.ExperimentalAccess.GetAnnotations().ToList();
+                var annots = pg.GetAnnotations().ToList();
                 Assert.NotEmpty(annots);
             }
 
             using (var rewritten = PdfDocument.Open(results, ParsingOptions.LenientParsingOff))
             {
                 var pg = rewritten.GetPage(1);
-                var annots = pg.ExperimentalAccess.GetAnnotations().ToList();
+                var annots = pg.GetAnnotations().ToList();
                 Assert.Empty(annots);
             }
         }

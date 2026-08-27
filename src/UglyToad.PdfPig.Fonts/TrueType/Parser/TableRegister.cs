@@ -16,7 +16,7 @@
         /// <summary>
         /// This table contains the data that defines the appearance of the glyphs in the font.
         /// </summary>
-        internal GlyphDataTable GlyphTable { get; }
+        internal GlyphDataTable? GlyphTable { get; }
 
         /// <summary>
         /// This table contains information needed to layout fonts whose characters are written horizontally.
@@ -26,12 +26,12 @@
         /// <summary>
         /// This table contains metric information for the horizontal layout each of the glyphs in the font.
         /// </summary>
-        public HorizontalMetricsTable HorizontalMetricsTable { get; }
+        public HorizontalMetricsTable? HorizontalMetricsTable { get; }
 
         /// <summary>
         /// This table stores the offsets to the locations of the glyphs (relative to the glyph table).
         /// </summary>
-        public IndexToLocationTable IndexToLocationTable { get; }
+        public IndexToLocationTable? IndexToLocationTable { get; }
 
         /// <summary>
         /// This table establishes the memory requirements for the font.
@@ -41,27 +41,27 @@
         /// <summary>
         /// This table defines strings used by the font.
         /// </summary>
-        public NameTable NameTable { get; }
+        public NameTable? NameTable { get; }
 
         /// <summary>
         /// This table contains information needed to use a TrueType font on a PostScript printer. 
         /// It contains the PostScript names for all of the glyphs in the font
         /// </summary>
-        public PostScriptTable PostScriptTable { get; }
+        public PostScriptTable? PostScriptTable { get; }
 
         /// <summary>
         /// Defines mapping of character codes to glyph index values in the font.
         /// Can contain multiple sub-tables to support multiple encoding schemes.
         /// Where a character code isn't found it should map to index 0.
         /// </summary>
-        public CMapTable CMapTable { get; }
+        public CMapTable? CMapTable { get; }
 
-        internal KerningTable KerningTable { get; }
+        internal KerningTable? KerningTable { get; }
 
         /// <summary>
         /// This table consists of a set of metrics that are required by Windows.
         /// </summary>
-        public Os2Table Os2Table { get; }
+        public Os2Table? Os2Table { get; }
 
         /// <summary>
         /// Create a new <see cref="TableRegister"/>.
@@ -98,26 +98,26 @@
 
             public HorizontalHeaderTable HorizontalHeaderTable { get; set; }
 
-            public HorizontalMetricsTable HorizontalMetricsTable { get; set; }
+            public HorizontalMetricsTable? HorizontalMetricsTable { get; set; }
 
-            public IndexToLocationTable IndexToLocationTable { get; set; }
+            public IndexToLocationTable? IndexToLocationTable { get; set; }
 
             public BasicMaximumProfileTable MaximumProfileTable { get; set; }
 
-            public PostScriptTable PostScriptTable { get; set; }
+            public PostScriptTable? PostScriptTable { get; set; }
 
             /// <summary>
             /// Defines mapping of character codes to glyph index values in the font.
             /// Can contain multiple sub-tables to support multiple encoding schemes.
             /// Where a character code isn't found it should map to index 0.
             /// </summary>
-            public CMapTable CMapTable { get; set; }
+            public CMapTable? CMapTable { get; set; }
 
-            public KerningTable KerningTable { get; set; }
+            public KerningTable? KerningTable { get; set; }
 
-            public NameTable NameTable { get; set; }
+            public NameTable? NameTable { get; set; }
 
-            public Os2Table Os2Table { get; set; }
+            public Os2Table? Os2Table { get; set; }
 
             public TableRegister Build()
             {

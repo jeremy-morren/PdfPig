@@ -136,7 +136,7 @@
         /// Get the Adobe Font Metrics as <see cref="AdobeFontMetrics"/> for a font.
         /// If the font is not found this returns <see langword="null"/>.
         /// </summary>
-        public static AdobeFontMetrics GetAdobeFontMetrics(string baseName)
+        public static AdobeFontMetrics? GetAdobeFontMetrics(string baseName)
         {
             Standard14Cache.TryGetValue(baseName, out var metrics);
 

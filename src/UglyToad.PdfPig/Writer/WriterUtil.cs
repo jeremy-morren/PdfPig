@@ -10,7 +10,7 @@
     using Tokenization.Scanner;
     using Tokens;
 
-	internal static class WriterUtil
+    internal static class WriterUtil
     {
         public static Dictionary<string, IToken> GetOrCreateDict<T>(
             this Dictionary<T, IToken> dict,
@@ -160,7 +160,7 @@
             return tokenToCopy;
         }
 
-        internal static IEnumerable<(DictionaryToken, IReadOnlyList<DictionaryToken>)> WalkTree(PageTreeNode node, List<DictionaryToken>? parents = null)
+        internal static IEnumerable<(PageTreeNode Page, IReadOnlyList<DictionaryToken> Parents)> WalkTree(PageTreeNode node, List<DictionaryToken>? parents = null)
         {
             if (parents is null)
             {
@@ -169,7 +169,7 @@
 
             if (node.IsPage)
             {
-                yield return (node.NodeDictionary, parents);
+                yield return (node, parents);
                 yield break;
             }
 

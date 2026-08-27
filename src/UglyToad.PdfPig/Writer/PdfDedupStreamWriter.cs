@@ -71,7 +71,7 @@
 
         private sealed class FNVByteComparison : IEqualityComparer<byte[]>
         {
-            public bool Equals(byte[] x, byte[] y)
+            public bool Equals(byte[]? x, byte[]? y)
             {
                 return x.AsSpan().SequenceEqual(y.AsSpan());
             }

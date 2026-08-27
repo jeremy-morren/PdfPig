@@ -30,7 +30,7 @@
         /// <summary>
         /// The name of the font according to the font's name table.
         /// </summary>
-        public string Name => TableRegister.NameTable?.FontName;
+        public string? Name => TableRegister.NameTable?.FontName;
 
         /// <summary>
         /// The cmap subtable for Windows Unicode (3, 1).
@@ -120,7 +120,7 @@
         /// Try to get the bounding box for a glyph representing the specified character code if present.
         /// Uses a custom mapping of character code to glyph index.
         /// </summary>
-        public bool TryGetBoundingBox(int characterCode, Func<int, int?> characterCodeToGlyphId, out PdfRectangle boundingBox)
+        public bool TryGetBoundingBox(int characterCode, Func<int, int?>? characterCodeToGlyphId, out PdfRectangle boundingBox)
         {
             boundingBox = default(PdfRectangle);
 
@@ -231,7 +231,7 @@
         /// <summary>
         /// Try to get the advance width for a glyph representing the specified character code if present.
         /// </summary>
-        public bool TryGetAdvanceWidth(int characterCode, Func<int, int?> characterCodeToGlyphId, out double width)
+        public bool TryGetAdvanceWidth(int characterCode, Func<int, int?>? characterCodeToGlyphId, out double width)
         {
             width = 0.0;
 
@@ -265,7 +265,7 @@
             return true;
         }
 
-        private bool TryGetGlyphIndex(int characterIdentifier, Func<int, int?> characterCodeToGlyphId, out int glyphId)
+        private bool TryGetGlyphIndex(int characterIdentifier, Func<int, int?>? characterCodeToGlyphId, out int glyphId)
         {
             glyphId = 0;
 

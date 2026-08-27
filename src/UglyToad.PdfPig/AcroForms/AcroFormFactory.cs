@@ -5,6 +5,7 @@
     using Fields;
     using Filters;
     using Parser.Parts;
+    using Signing;
     using System;
     using System.Collections.Generic;
     using System.Linq;
@@ -131,15 +132,17 @@
 
                 var fieldDictionary = DirectObjectFinder.Get<DictionaryToken>(fieldToken, tokenScanner);
 
-                var field = GetAcroField(fieldDictionary, catalog, new List<DictionaryToken>(0));
+                var field = GetAcroField(fieldDictionary, fieldReferenceToken.Data, catalog, new List<DictionaryToken>(0));
 
                 fields[fieldReferenceToken.Data] = field;
             }
 
-            return new AcroForm(acroDictionary, signatureFlags, needAppearances, fields);
+            var acroReference = acroRawToken is IndirectReferenceToken acroReferenceToken ? acroReferenceToken.Data : (IndirectReference?)null;
+
+            return new AcroForm(acroDictionary, signatureFlags, needAppearances, fields, acroReference);
         }
 
-        private AcroFieldBase GetAcroField(DictionaryToken fieldDictionary, Catalog catalog,
+        private AcroFieldBase GetAcroField(DictionaryToken fieldDictionary, IndirectReference? fieldReference, Catalog catalog,
             IReadOnlyList<DictionaryToken> parentDictionaries)
         {
             var (combinedFieldDictionary, inheritsValue) = CreateInheritedDictionary(fieldDictionary, parentDictionaries);
@@ -149,7 +152,7 @@
             fieldDictionary.TryGet(NameToken.Ft, tokenScanner, out NameToken? fieldType);
             fieldDictionary.TryGet(NameToken.Ff, tokenScanner, out NumericToken? fieldFlagsToken);
 
-            var kids = new List<(bool hasParent, DictionaryToken dictionary)>();
+            var kids = new List<(bool hasParent, DictionaryToken dictionary, IndirectReference reference)>();
 
             if (fieldDictionary.TryGetOptionalTokenDirect(NameToken.Kids, tokenScanner, out ArrayToken? kidsToken))
             {
@@ -169,7 +172,7 @@
                     if (kidObject.Data is DictionaryToken kidDictionaryToken)
                     {
                         var hasParent = kidDictionaryToken.TryGet(NameToken.Parent, out IndirectReferenceToken _);
-                        kids.Add((hasParent, kidDictionaryToken));
+                        kids.Add((hasParent, kidDictionaryToken, kidReferenceToken.Data));
                     }
                     else
                     {
@@ -182,7 +185,8 @@
             fieldDictionary.TryGetOptionalStringDirect(NameToken.Tu, tokenScanner, out var alternateFieldName);
             fieldDictionary.TryGetOptionalStringDirect(NameToken.Tm, tokenScanner, out var mappingName);
             fieldDictionary.TryGet(NameToken.Parent, out IndirectReferenceToken parentReferenceToken);
-            var information = new AcroFieldCommonInformation(parentReferenceToken?.Data, partialFieldName, alternateFieldName, mappingName);
+            var fullyQualifiedFieldName = GetFullyQualifiedFieldName(parentDictionaries, partialFieldName);
+            var information = new AcroFieldCommonInformation(parentReferenceToken?.Data, fullyQualifiedFieldName, partialFieldName, alternateFieldName, mappingName, fieldReference);
 
             int? pageNumber = null;
             if (fieldDictionary.TryGet(NameToken.P, tokenScanner, out IndirectReferenceToken? pageReference))
@@ -207,7 +211,7 @@
                     continue;
                 }
 
-                children.Add(GetAcroField(kid.dictionary, catalog, newParentDictionaries));
+                children.Add(GetAcroField(kid.dictionary, kid.reference, catalog, newParentDictionaries));
             }
 
             var fieldFlags = (uint) (fieldFlagsToken?.Long ?? 0);
@@ -280,9 +284,11 @@
             }
             else if (fieldType == NameToken.Sig)
             {
+                var signatureValue = GetSignatureValue(fieldDictionary);
                 var field = new AcroSignatureField(fieldDictionary, fieldType, fieldFlags, information,
                     pageNumber,
-                    bounds);
+                    bounds,
+                    signatureValue);
                 result = field;
             }
             else
@@ -293,7 +299,90 @@
             return result;
         }
 
-        private AcroFieldBase GetTextField(DictionaryToken fieldDictionary, NameToken fieldType, uint fieldFlags, 
+        private AcroSignatureValue? GetSignatureValue(DictionaryToken fieldDictionary)
+        {
+            if (!fieldDictionary.TryGet(NameToken.V, out var signatureValueToken)
+                || !DirectObjectFinder.TryGet(signatureValueToken, tokenScanner, out DictionaryToken signatureDictionary))
+            {
+                return null;
+            }
+
+            var signatureReference = signatureValueToken is IndirectReferenceToken signatureReferenceToken
+                ? signatureReferenceToken.Data
+                : (IndirectReference?)null;
+
+            var filter = default(string?);
+            if (signatureDictionary.TryGet(NameToken.Filter, tokenScanner, out NameToken filterToken))
+            {
+                filter = filterToken.Data;
+            }
+
+            var subFilter = default(string?);
+            if (signatureDictionary.TryGet(NameToken.SubFilter, tokenScanner, out NameToken subFilterToken))
+            {
+                subFilter = subFilterToken.Data;
+            }
+
+            var byteRange = Array.Empty<long>();
+            if (signatureDictionary.TryGet(NameToken.Byterange, out ArrayToken byteRangeToken)
+                && byteRangeToken.Length == 4
+                && byteRangeToken[0] is NumericToken offset1Token
+                && byteRangeToken[1] is NumericToken length1Token
+                && byteRangeToken[2] is NumericToken offset2Token
+                && byteRangeToken[3] is NumericToken length2Token)
+            {
+                byteRange =
+                [
+                    offset1Token.Long,
+                    length1Token.Long,
+                    offset2Token.Long,
+                    length2Token.Long
+                ];
+            }
+
+            var contents = ReadOnlyMemory<byte>.Empty;
+            var contentsFieldValueLength = 0;
+            if (signatureDictionary.TryGet(NameToken.Contents, out var contentsToken))
+            {
+                if (contentsToken is HexToken hexToken)
+                {
+                    contents = hexToken.Memory;
+                    contentsFieldValueLength = hexToken.SerializedLength;
+                }
+                else if (contentsToken is StringToken stringToken)
+                {
+                    contents = stringToken.GetBytes();
+                    contentsFieldValueLength = stringToken.SerializedLength;
+                }
+            }
+
+            signatureDictionary.TryGetOptionalStringDirect(NameToken.Reason, tokenScanner, out var reason);
+            signatureDictionary.TryGetOptionalStringDirect(NameToken.Location, tokenScanner, out var location);
+            signatureDictionary.TryGetOptionalStringDirect(NameToken.ContactInfo, tokenScanner, out var contactInfo);
+            signatureDictionary.TryGetOptionalStringDirect(NameToken.Name, tokenScanner, out var name);
+            var metadata = new PdfSignatureMetadata(
+                reason: reason, location: location, contactInfo: contactInfo, name: name);
+
+            DateTimeOffset? modifiedDate = null;
+            if (signatureDictionary.TryGetOptionalStringDirect(NameToken.M, tokenScanner, out var modifiedDateText)
+                && DateFormatHelper.TryParseDateTimeOffset(modifiedDateText, out var parsedModifiedDate))
+            {
+                modifiedDate = parsedModifiedDate;
+            }
+
+            return new AcroSignatureValue(
+                signatureDictionary,
+                signatureReference,
+                filter,
+                subFilter,
+                byteRange,
+                contents,
+                contentsFieldValueLength,
+                metadata,
+                modifiedDate);
+        }
+
+        private AcroFieldBase GetTextField(DictionaryToken fieldDictionary, NameToken fieldType, uint fieldFlags,
             AcroFieldCommonInformation information, 
             int? pageNumber,
             PdfRectangle? bounds)
@@ -544,6 +633,27 @@
             }
 
             return (new DictionaryToken(inheritedDictionary), inheritsValue);
+        }
+
+        private string? GetFullyQualifiedFieldName(IReadOnlyList<DictionaryToken> parentDictionaries, string? partialFieldName)
+        {
+            var parts = new List<string>();
+
+            foreach (var parentDictionary in parentDictionaries)
+            {
+                if (parentDictionary.TryGetOptionalStringDirect(NameToken.T, tokenScanner, out var parentPartialName)
+                    && !string.IsNullOrWhiteSpace(parentPartialName))
+                {
+                    parts.Add(parentPartialName);
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(partialFieldName))
+            {
+                parts.Add(partialFieldName);
+            }
+
+            return parts.Count == 0 ? null : string.Join(".", parts);
         }
 
         private static bool IsChoiceSelected(IReadOnlyList<string> selectedOptionNames, IReadOnlyList<int>? selectedOptionIndices, int index, string name)

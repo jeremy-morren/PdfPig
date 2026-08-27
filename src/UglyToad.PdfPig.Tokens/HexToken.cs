@@ -53,15 +53,32 @@ namespace UglyToad.PdfPig.Tokens
         public ReadOnlyMemory<byte> Memory => _bytes;
 
         /// <summary>
+        /// The length of the token as serialized in the PDF source, including the <c>&lt;</c> and <c>&gt;</c> delimiters.
+        /// </summary>
+        public int SerializedLength { get; }
+
+        /// <summary>
         /// Create a new <see cref="HexToken"/> from the provided hex characters.
         /// </summary>
         /// <param name="characters">A set of hex characters 0-9, A - F, a - f representing a string.</param>
         public HexToken(ReadOnlySpan<char> characters)
+            : this(characters, characters.Length + 2)
         {
-            if (characters == null)
+        }
+
+        /// <summary>
+        /// Create a new <see cref="HexToken"/> from the provided hex characters.
+        /// </summary>
+        /// <param name="characters">A set of hex characters 0-9, A - F, a - f representing a string.</param>
+        /// <param name="serializedLength">The length of the token as serialized in the source PDF, including delimiters.</param>
+        public HexToken(ReadOnlySpan<char> characters, int serializedLength)
+        {
+            if (serializedLength < characters.Length + 2)
             {
-                throw new ArgumentNullException(nameof(characters));
+                throw new ArgumentOutOfRangeException(nameof(serializedLength), "The serialized length must include both delimiters and all hex characters.");
             }
+
+            SerializedLength = serializedLength;
 
             // if the final character is missing, it is considered to be a 0, as per 7.3.4.3
             // adding 1 to the characters array length ensure the size of the byte array is correct

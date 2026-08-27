@@ -1,6 +1,6 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
-        <TargetFrameworks>net471;net8.0;net9.0</TargetFrameworks>
+        <TargetFrameworks>net472;net8.0;net9.0</TargetFrameworks>
         <IsTestProject>true</IsTestProject>
         <IsPackable>false</IsPackable>
         <DebugType>full</DebugType>
@@ -208,8 +208,12 @@
         <Using Include="Xunit" />
     </ItemGroup>
     <ItemGroup Condition="'$(TargetFramework)' == 'net9.0'">
-        <PackageReference Include="Microsoft.AspNetCore.WebUtilities">
-            <Version>9.0.8</Version>
-        </PackageReference>
+        <PackageReference Include="Microsoft.AspNetCore.WebUtilities" Version="9.0.8" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Include="../../tools/UglyToad.PdfPig.SigningTest/sample/**/*.*"
+              CopyToOutputDirectory="PreserveNewest"
+              Link="Integration/Signing/TestFiles/%(RecursiveDir)%(Filename)%(Extension)" />
     </ItemGroup>
 </Project>

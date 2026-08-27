@@ -15,6 +15,8 @@
     using Tokens;
     using Outline;
     using Outline.Destinations;
+    using Signing;
+    using System.Linq;
 
     /// <inheritdoc />
     /// <summary>
@@ -34,6 +36,8 @@
         private readonly ParsingOptions parsingOptions;
         private readonly Pages pages;
         private readonly NamedDestinations namedDestinations;
+
+        internal readonly PdfDocumentSigningContext signingContext;
 
         /// <summary>
         /// The metadata associated with this document.
@@ -76,7 +80,8 @@
             ILookupFilterProvider filterProvider,
             AcroFormFactory acroFormFactory,
             BookmarksProvider bookmarksProvider,
-            ParsingOptions parsingOptions)
+            ParsingOptions parsingOptions,
+            PdfDocumentSigningContext signingContext)
         {
             this.inputBytes = inputBytes;
             this.version = version ?? throw new ArgumentNullException(nameof(version));
@@ -92,6 +97,21 @@
             Structure = new Structure(catalog, pdfScanner);
             Advanced = new AdvancedPdfDocumentAccess(pdfScanner, filterProvider, catalog);
             documentForm = new Lazy<AcroForm>(() => acroFormFactory.GetAcroForm(catalog)!);
+            this.signingContext = signingContext ?? throw new ArgumentNullException(nameof(signingContext));
+        }
+
+        internal byte[] GetSourceBytes()
+        {
+            if (isDisposed)
+            {
+                throw new ObjectDisposedException("Cannot access the document after it is disposed.");
+            }
+
+            inputBytes.Seek(0);
+            var bytes = new byte[inputBytes.Length];
+            _ = inputBytes.Read(bytes);
+            inputBytes.Seek(0);
+            return bytes;
         }
 
         /// <summary>
@@ -135,6 +155,26 @@
         public static PdfDocument Open(Stream stream, ParsingOptions? options = null) => PdfDocumentFactory.Open(stream, options);
 
         /// <summary>
+        /// Gets all embedded PDF signature results in stable AcroForm field-tree order.
+        /// </summary>
+        /// <param name="options">The verification options to use.</param>
+        /// <returns>The discovered signatures, or <see langword="null"/> when the document contains no applied signatures.</returns>
+        public List<PdfSignatureVerificationResult>? GetSignatures(PdfSignatureVerificationOptions? options = null) =>
+            TryGetForm(out var form)
+                ? PdfSignatureVerifier.GetSignatures(form, inputBytes, options)
+                : null;
+
+        /// <summary>
+        /// Gets all embedded RFC 3161 timestamp token results in stable AcroForm field-tree order.
+        /// </summary>
+        /// <param name="options">The verification options to use.</param>
+        /// <returns>The discovered timestamps, or <see langword="null"/> when the document contains no embedded timestamp tokens.</returns>
+        public List<PdfSignatureVerificationResult>? GetTimestampSignatures(PdfSignatureVerificationOptions? options = null) =>
+            TryGetForm(out var form)
+                ? PdfSignatureVerifier.GetTimestampSignatures(form, inputBytes, options)
+                : null;
+
+        /// <summary>
         /// Add a page factory.
         /// </summary>
         public void AddPageFactory<TPage>(IPageFactory<TPage> pageFactory)
@@ -146,10 +186,11 @@
         /// Add a page factory.
         /// </summary>
 #if NET
-        public void AddPageFactory<TPage, [System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicConstructors)] TPageFactory>() where TPageFactory : IPageFactory<TPage>
+        public void AddPageFactory<TPage, [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TPageFactory>()
 #else
-        public void AddPageFactory<TPage, TPageFactory>() where TPageFactory : IPageFactory<TPage>
+        public void AddPageFactory<TPage, TPageFactory>()
 #endif
+            where TPageFactory : IPageFactory<TPage>
         {
             pages.AddPageFactory<TPage, TPageFactory>();
         }
@@ -282,7 +323,7 @@
         /// </summary>
         /// <remarks>This will throw a <see cref="ObjectDisposedException"/> if called on a disposed <see cref="PdfDocument"/>.</remarks>
         /// <returns>An <see cref="AcroForm"/> from the document or <see langword="null"/> if not present.</returns>
-        public bool TryGetForm(out AcroForm form)
+        public bool TryGetForm([NotNullWhen(true)] out AcroForm? form)
         {
             if (isDisposed)
             {
@@ -290,7 +331,6 @@
             }
 
             form = documentForm.Value;
-
             return form != null;
         }
 

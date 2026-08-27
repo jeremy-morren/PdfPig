@@ -346,6 +346,8 @@ The fields can be accessed using the `AcroForm`'s `Fields` property. Since the f
 
 Please note the forms are readonly and values cannot be changed or added using PdfPig.
 
+A draft design for future PDF signing support is available in [docs/pdf-signing.md](docs/pdf-signing.md).
+
 ### Hyperlinks
 
 A page has a method to extract hyperlinks (annotations of link type):

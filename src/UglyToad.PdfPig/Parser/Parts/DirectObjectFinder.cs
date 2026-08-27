@@ -97,6 +97,7 @@
         }
 
 #nullable disable
+
         /// <summary>
         /// Get the token value, using the <see cref="IPdfTokenScanner"/> if it is a <see cref="IndirectReferenceToken"/>.
         /// </summary>

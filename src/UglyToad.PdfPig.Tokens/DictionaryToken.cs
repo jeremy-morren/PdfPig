@@ -2,6 +2,7 @@
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics.CodeAnalysis;
     using System.Linq;
 
     /// <summary>
@@ -64,10 +65,10 @@
         /// <param name="name">The name of the entry to retrieve.</param>
         /// <param name="token">The token, if it is found.</param>
         /// <returns><see langword="true"/> if the token is found with this type, <see langword="false"/> otherwise.</returns>
-        public bool TryGet<T>(NameToken name, out T token) where T : IToken
+        public bool TryGet<T>(NameToken name, [NotNullWhen(true)] out T token) where T : IToken
         {
-            token = default(T);
-            if (!TryGet(name, out var t) || !(t is T typedToken))
+            token = default;
+            if (!TryGet(name, out var t) || t is not T typedToken)
             {
                 return false;
             }

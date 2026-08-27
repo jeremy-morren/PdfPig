@@ -125,7 +125,10 @@
             Height = viewBox.Height;
             Size = viewBox.GetPageSize();
 
+#pragma warning disable CS0618 // Type or member is obsolete
             ExperimentalAccess = new Experimental(this);
+#pragma warning restore CS0618 // Type or member is obsolete
+
             this.annotationProvider = annotationProvider;
             this.pdfScanner = pdfScanner ?? throw new ArgumentNullException(nameof(pdfScanner));
         }
@@ -138,19 +141,15 @@
             }
 
 #if NET
-            int length = 0;
+            var length = content.Letters.Sum(l => l.Value.Length);
 
-            for (var i = 0; i < content.Letters.Count; i++)
+            return string.Create(length, content, static (buffer, content) =>
             {
-                length += content.Letters[i].Value.Length;
-            }
+                var position = 0;
 
-            return string.Create(length, content, static (buffer, content) => {
-                int position = 0;
-
-                for (var i = 0; i < content.Letters.Count; i++)
+                foreach (var letter in content.Letters)
                 {
-                    var value = content.Letters[i].Value;
+                    var value = letter.Value;
 
                     value.AsSpan().CopyTo(buffer[position..]);
 

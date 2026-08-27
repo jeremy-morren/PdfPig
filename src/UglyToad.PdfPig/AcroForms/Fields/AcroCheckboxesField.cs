@@ -20,5 +20,10 @@
                 AcroFieldType.Checkboxes, children)
         {
         }
+
+        /// <summary>
+        /// The <see cref="AcroButtonFieldFlags"/> which define the behaviour of this button type.
+        /// </summary>
+        public AcroButtonFieldFlags Flags => (AcroButtonFieldFlags)FieldFlags;
     }
 }

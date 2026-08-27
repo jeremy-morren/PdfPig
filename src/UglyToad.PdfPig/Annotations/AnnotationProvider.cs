@@ -59,7 +59,7 @@
                 }
 
                 Annotation? replyTo = null;
-                if (annotationDictionary.TryGet(NameToken.Irt, out IndirectReferenceToken? referencedAnnotation)
+                if (annotationDictionary.TryGet(NameToken.Irt, out IndirectReferenceToken referencedAnnotation)
                     && lookupAnnotations.TryGetValue(referencedAnnotation!.Data, out var linkedAnnotation))
                 {
                     replyTo = linkedAnnotation;

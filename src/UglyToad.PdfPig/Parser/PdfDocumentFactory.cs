@@ -20,6 +20,7 @@
     using PdfFonts.Parser;
     using PdfFonts.Parser.Handlers;
     using PdfFonts.Parser.Parts;
+    using Signing;
     using Tokenization.Scanner;
     using Tokens;
     using UglyToad.PdfPig.PdfFonts.Cmap;
@@ -228,6 +229,16 @@
 
             var bookmarksProvider = new BookmarksProvider(parsingOptions.Logger, pdfScanner);
 
+            var effectiveOffsets = initialParse.BruteForceOffsets ?? initialParse.XrefOffsets;
+            var maxObjectNumber = effectiveOffsets.Count == 0 ? (int)rootReference.ObjectNumber : (int)effectiveOffsets.Keys.Max(x => x.ObjectNumber);
+            var informationReference = trailer.Info is IndirectReferenceToken infoReference ? infoReference.Data : default(IndirectReference?);
+            var signingContext = new PdfDocumentSigningContext(
+                rootReference,
+                informationReference,
+                trailer.Identifier,
+                initialParse.LatestCrossReferenceOffset,
+                maxObjectNumber);
+
             return new PdfDocument(
                 inputBytes,
                 version,
@@ -238,7 +249,8 @@
                 filterProvider,
                 acroFormFactory,
                 bookmarksProvider,
-                parsingOptions);
+                parsingOptions,
+                signingContext);
         }
 
         private static (IndirectReference, DictionaryToken) ParseTrailer(

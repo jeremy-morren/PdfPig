@@ -56,7 +56,7 @@
             var imgDic = new DictionaryToken(Properties ?? new Dictionary<NameToken, IToken>()).Resolve(tokenScanner);
 
             XObjectImage? softMaskImage = null;
-            if (imgDic.TryGet(NameToken.Smask, tokenScanner, out StreamToken? sMaskToken))
+            if (imgDic.TryGet(NameToken.Smask, tokenScanner, out StreamToken sMaskToken))
             {
                 if (!sMaskToken.StreamDictionary.TryGet(NameToken.Subtype, out NameToken softMaskSubType) || !softMaskSubType.Equals(NameToken.Image))
                 {

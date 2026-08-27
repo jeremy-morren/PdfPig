@@ -67,7 +67,21 @@
 
             Assert.Equal(expected, AssertStringToken(token).Data);
         }
-        
+
+        [Theory]
+        [InlineData("(abc)", 5)]
+        [InlineData(@"(a\(b\))", 8)]
+        [InlineData(@"(line\n)", 8)]
+        public void PreservesSerializedLength(string s, int expectedSerializedLength)
+        {
+            var input = StringBytesTestConverter.Convert(s);
+
+            var result = tokenizer.TryTokenize(input.First, input.Bytes, out var token);
+
+            Assert.True(result);
+            Assert.Equal(expectedSerializedLength, AssertStringToken(token).SerializedLength);
+        }
+
         [Fact]
         public void CanHandleNestedParentheses()
         {

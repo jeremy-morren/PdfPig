@@ -17,9 +17,12 @@
             }
 
             using var charBuffer = new ArrayPoolBufferWriter<char>();
+            var serializedLength = 1;
 
             while (inputBytes.MoveNext())
             {
+                serializedLength++;
+                
                 var current = inputBytes.CurrentByte;
 
                 if (ReadHelper.IsWhitespace(current))
@@ -40,7 +43,7 @@
                 charBuffer.Write((char)current);
             }
 
-            token = new HexToken(charBuffer.WrittenSpan);
+            token = new HexToken(charBuffer.WrittenSpan, serializedLength);
 
             return true;
         }

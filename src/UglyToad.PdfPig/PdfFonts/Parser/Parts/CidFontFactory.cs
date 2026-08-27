@@ -127,7 +127,7 @@
                             throw new NotSupportedException("Cannot read CID font from subtype.");
                         }
 
-                        if (!str.StreamDictionary.TryGet(NameToken.Subtype, out NameToken? subtypeName))
+                        if (!str.StreamDictionary.TryGet(NameToken.Subtype, out NameToken subtypeName))
                         {
                             throw new PdfDocumentFormatException($"The font file stream did not contain a subtype entry: {str.StreamDictionary}.");
                         }
