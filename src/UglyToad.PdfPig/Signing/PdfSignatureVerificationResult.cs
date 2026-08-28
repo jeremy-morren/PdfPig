@@ -49,6 +49,17 @@ public sealed class PdfSignatureVerificationResult
     public bool CoversEntireDocument { get; }
 
     /// <summary>
+    /// Gets the encoding of the signature that was found, taken from its <c>/SubFilter</c> entry.
+    /// </summary>
+    public PdfSignatureSubFilter SubFilter { get; }
+
+    /// <summary>
+    /// Gets the exception thrown by the configured <see cref="ICertificateValidator"/>, when
+    /// <see cref="ValidationError"/> is <see cref="PdfSignatureError.CertificateValidationFailed"/>.
+    /// </summary>
+    public PdfCertificateValidationFailedException? CertificateValidationException { get; }
+
+    /// <summary>
     /// Creates a new <see cref="PdfSignatureVerificationResult"/>.
     /// </summary>
     /// <param name="validationError">The validation error, or <see langword="null"/> when valid.</param>
@@ -58,6 +69,8 @@ public sealed class PdfSignatureVerificationResult
     /// <param name="signingTime">The CMS signing time, if available.</param>
     /// <param name="timeStampTime">The RFC 3161 timestamp time, if available.</param>
     /// <param name="coversEntireDocument">Whether the signature byte range covers the entire current document revision.</param>
+    /// <param name="subFilter">The encoding of the signature that was found.</param>
+    /// <param name="certificateValidationException">The exception thrown by the certificate validator, if any.</param>
     public PdfSignatureVerificationResult(
         PdfSignatureError? validationError,
         string? fieldName,
@@ -65,7 +78,9 @@ public sealed class PdfSignatureVerificationResult
         X509Certificate2? certificate,
         DateTimeOffset? signingTime,
         DateTimeOffset? timeStampTime,
-        bool coversEntireDocument)
+        bool coversEntireDocument,
+        PdfSignatureSubFilter subFilter = PdfSignatureSubFilter.Unknown,
+        PdfCertificateValidationFailedException? certificateValidationException = null)
     {
         ValidationError = validationError;
         FieldName = fieldName;
@@ -74,6 +89,8 @@ public sealed class PdfSignatureVerificationResult
         SigningTime = signingTime;
         TimeStampTime = timeStampTime;
         CoversEntireDocument = coversEntireDocument;
+        SubFilter = subFilter;
+        CertificateValidationException = certificateValidationException;
     }
 
     /// <summary>

@@ -226,6 +226,136 @@ public class PdfSignerTests
         Assert.False(result.IsValid);
     }
 
+    [Fact]
+    public async Task SignAsyncValidationRejectsByteRangeExcludingASpanOtherThanTheContents()
+    {
+        using var certificate = CreateSelfSignedRsaCertificate();
+        var signedBytes = await CreateSignedPdfAsync(certificate, "Signature1");
+
+        long[] byteRange;
+
+        using (var signedDocument = PdfDocument.Open(new MemoryStream(signedBytes, writable: false)))
+        {
+            Assert.True(signedDocument.TryGetForm(out var form));
+            var signatureField = Assert.Single(form.GetFields().OfType<AcroSignatureField>());
+            Assert.NotNull(signatureField.SignatureValue);
+            byteRange = signatureField.SignatureValue.ByteRange.ToArray();
+        }
+
+        // Slide the excluded gap earlier in the file, keeping its size, the declared spans and the
+        // total document length identical. The gap now hides real document bytes rather than the
+        // /Contents value, but the file is still self-consistent by every length-based measure:
+        // the gap size still equals the serialized length of the /Contents token, and the second
+        // span still runs to the end of the file. Only a positional check rejects this.
+        const int shift = 64;
+        var gapLength = byteRange[2] - byteRange[1];
+
+        var shiftedByteRange = string.Format(
+            System.Globalization.CultureInfo.InvariantCulture,
+            "[{0:D20} {1:D20} {2:D20} {3:D20}]",
+            byteRange[0],
+            byteRange[1] - shift,
+            byteRange[2] - shift,
+            byteRange[3] + shift);
+
+        var tamperedBytes = ReplaceByteRangeArray(signedBytes, shiftedByteRange);
+
+        using var tamperedDocument = PdfDocument.Open(new MemoryStream(tamperedBytes, writable: false));
+        Assert.True(tamperedDocument.TryGetForm(out var tamperedForm));
+        var tamperedField = Assert.Single(tamperedForm.GetFields().OfType<AcroSignatureField>());
+        var tamperedRange = tamperedField.SignatureValue!.ByteRange;
+
+        // The gap is still exactly as wide as the /Contents token and the spans still reach EOF,
+        // so the tampered file satisfies the length-only invariant this check replaced.
+        Assert.Equal(gapLength, tamperedRange[2] - tamperedRange[1]);
+        Assert.Equal(tamperedBytes.Length, tamperedRange[2] + tamperedRange[3]);
+
+        var result = Assert.Single(tamperedDocument.GetSignatures(CreateVerificationOptions(certificate))!);
+
+        Assert.False(result.IsValid);
+        Assert.Equal(PdfSignatureError.ByteRangeInvalid, result.ValidationError);
+        Assert.False(result.CoversEntireDocument);
+    }
+
+    [Fact]
+    public async Task SignAsyncValidationReportsContentAppendedAfterTheOutermostSignature()
+    {
+        using var certificate = CreateSelfSignedRsaCertificate();
+        var signedBytes = await CreateSignedPdfAsync(certificate, "Signature1");
+
+        // Append bytes the signature cannot cover. Everything it did sign is untouched, so the CMS
+        // payload still verifies against the byte ranges and only the coverage check can catch this.
+        var appended = System.Text.Encoding.ASCII.GetBytes("\n% content added after signing\n");
+        var tamperedBytes = signedBytes.Concat(appended).ToArray();
+
+        using var tamperedDocument = PdfDocument.Open(new MemoryStream(tamperedBytes, writable: false));
+        var result = Assert.Single(tamperedDocument.GetSignatures(CreateVerificationOptions(certificate))!);
+
+        Assert.False(result.CoversEntireDocument);
+        Assert.False(result.IsValid);
+        Assert.Equal(PdfSignatureError.DocumentModifiedAfterSigning, result.ValidationError);
+        Assert.Throws<InvalidOperationException>(() => result.ThrowIfInvalid());
+
+        // The signer is still reported, so callers can tell "signed then modified" from "not signed".
+        Assert.NotNull(result.Certificate);
+    }
+
+    [Fact]
+    public async Task SignAsyncValidationAcceptsEarlierSignatureSupersededByALaterOne()
+    {
+        using var certificate = CreateSelfSignedRsaCertificate();
+
+        var firstSignedBytes = await CreateSignedPdfAsync(certificate, "Signature1");
+
+        byte[] secondSignedBytes;
+
+        using (var secondSource = PdfDocument.Open(new MemoryStream(firstSignedBytes, writable: false)))
+        using (var secondOutput = new MemoryStream())
+        {
+            await PdfSigner.SignAsync(
+                secondSource,
+                secondOutput,
+                new CmsDetachedSignatureProvider(certificate),
+                new PdfSignatureOptions { FieldName = "Signature2" });
+
+            secondSignedBytes = secondOutput.ToArray();
+        }
+
+        using var twiceSigned = PdfDocument.Open(new MemoryStream(secondSignedBytes, writable: false));
+        var results = twiceSigned.GetSignatures(CreateVerificationOptions(certificate))!;
+
+        // The first signature does not reach the end of the file, but the second one does, so the
+        // appended revision is accounted for and neither signature is reported as modified.
+        Assert.Equal(2, results.Count);
+        Assert.All(results, x => x.ThrowIfInvalid());
+        Assert.False(results[0].CoversEntireDocument);
+        Assert.True(results[1].CoversEntireDocument);
+    }
+
+    [Fact]
+    public async Task SignAsyncThrowsForEncryptedDocuments()
+    {
+        using var certificate = CreateSelfSignedRsaCertificate();
+        using var document = PdfDocument.Open(
+            IntegrationHelpers.GetSpecificTestDocumentPath("encrypted-password-is-password.pdf"),
+            new ParsingOptions { Password = "password" });
+
+        Assert.True(document.IsEncrypted);
+
+        using var output = new MemoryStream();
+
+        await Assert.ThrowsAsync<NotSupportedException>(() => PdfSigner.SignAsync(
+            document,
+            output,
+            new CmsDetachedSignatureProvider(certificate),
+            new PdfSignatureOptions
+            {
+                FieldName = "Signature1"
+            }).AsTask());
+
+        Assert.Equal(0, output.Length);
+    }
+
     [Theory]
     [InlineData(null, 1024, "Adobe.PPKLite", "adbe.pkcs7.detached", "SHA-256", typeof(ArgumentException))]
     [InlineData("", 1024, "Adobe.PPKLite", "adbe.pkcs7.detached", "SHA-256", typeof(ArgumentException))]

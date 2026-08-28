@@ -95,8 +95,8 @@ public class PdfSignatureVerificationTests
     /// Verifies multiple single-signature invalid inputs produce the expected validation errors.
     /// </summary>
     [Theory]
-    [InlineData("pdfsInvalid/signed-with-no-eku.pdf", PdfSignatureError.EKUNotValidForSigning, true)]
-    [InlineData("pdfsInvalid/signed-with-different-eku.pdf", PdfSignatureError.EKUNotValidForSigning, true)]
+    [InlineData("pdfsInvalid/signed-with-no-eku.pdf", PdfSignatureError.CertificateValidationFailed, true)]
+    [InlineData("pdfsInvalid/signed-with-different-eku.pdf", PdfSignatureError.CertificateValidationFailed, true)]
     [InlineData("pdfsInvalid/signature-field-with-invalid-cms.pdf", PdfSignatureError.CmsInvalid, true)]
     public void SingleInvalidSignatureFilesReturnExpectedError(string relativePath, PdfSignatureError expectedError, bool expectedCoversEntireDocument)
     {
@@ -172,7 +172,7 @@ public class PdfSignatureVerificationTests
         Assert.Equal(2, results.Count);
         Assert.All(results, x =>
         {
-            Assert.Equal(PdfSignatureError.EKUNotValidForSigning, x.ValidationError);
+            Assert.Equal(PdfSignatureError.CertificateValidationFailed, x.ValidationError);
             Assert.Throws<InvalidOperationException>(x.ThrowIfInvalid);
         });
     }
@@ -203,8 +203,8 @@ public class PdfSignatureVerificationTests
 
         Assert.Equal(3, results.Count);
         Assert.True(results[0].IsValid);
-        Assert.Equal(PdfSignatureError.EKUNotValidForSigning, results[1].ValidationError);
-        Assert.Equal(PdfSignatureError.EKUNotValidForSigning, results[2].ValidationError);
+        Assert.Equal(PdfSignatureError.CertificateValidationFailed, results[1].ValidationError);
+        Assert.Equal(PdfSignatureError.CertificateValidationFailed, results[2].ValidationError);
     }
 
     /// <summary>
@@ -233,6 +233,100 @@ public class PdfSignatureVerificationTests
 
         Assert.False(result.IsValid);
         Assert.Equal(PdfSignatureError.TimeStampTokenMismatch, result.ValidationError);
+    }
+
+    /// <summary>
+    /// Verifies a document that carries a signature but no timestamp: the signature stands on its own
+    /// and <see cref="PdfDocument.GetTimestampSignatures"/> finds nothing to report.
+    /// </summary>
+    [Fact]
+    public void SignedButNotTimestampedDocumentIsValidAndReportsNoTimestamp()
+    {
+        using var document = PdfDocument.Open(GetSigningFixturePath("pdfs", "signed", "rsa-leaf-valid.pdf"));
+
+        var options = CreateVerificationOptions("certs/rsa-root-valid.cer");
+
+        var signature = Assert.Single(document.GetSignatures(options)!);
+        signature.ThrowIfInvalid();
+        Assert.True(signature.CoversEntireDocument);
+        Assert.Null(signature.TimeStampTime);
+
+        Assert.Null(document.GetTimestampSignatures(options));
+    }
+
+    /// <summary>
+    /// Verifies documents carrying both a signature and an embedded RFC 3161 timestamp, across the
+    /// signing algorithms the fixtures cover. The ECDSA cases also chain through an intermediate.
+    /// </summary>
+    [Theory]
+    [InlineData("rsa-leaf-valid.pdf", "certs/rsa-root-valid.cer")]
+    [InlineData("ecdsa-leaf-valid-p256.pdf", "certs/ecdsa-root-valid-p384.cer")]
+    [InlineData("ecdsa-leaf-valid-p384.pdf", "certs/ecdsa-root-valid-p384.cer")]
+    [InlineData("ecdsa-leaf-valid-p521.pdf", "certs/ecdsa-root-valid-p384.cer")]
+    public void SignedAndTimestampedDocumentsReportBothAsValid(string fileName, string signatureRoot)
+    {
+        using var document = PdfDocument.Open(GetSigningFixturePath("pdfs", "timestamped", fileName));
+
+        // The signer and the timestamp authority are anchored separately, as the API intends: these
+        // fixtures use an RSA timestamp authority regardless of the algorithm that signed the document.
+        var options = new PdfSignatureVerificationOptions
+        {
+            SignatureTrust = new PdfCertificateTrustOptions
+            {
+                UseSystemStore = false,
+                RevocationMode = X509RevocationMode.NoCheck,
+                AdditionalTrustedRoots = [LoadFixtureCertificate(signatureRoot)]
+            },
+            TimeStampTrust = new PdfCertificateTrustOptions
+            {
+                UseSystemStore = false,
+                RevocationMode = X509RevocationMode.NoCheck,
+                AdditionalTrustedRoots = [LoadFixtureCertificate("certs/rsa-root-valid.cer")]
+            }
+        };
+
+        var signature = Assert.Single(document.GetSignatures(options)!);
+        signature.ThrowIfInvalid();
+        Assert.True(signature.CoversEntireDocument);
+
+        var timestamp = Assert.Single(document.GetTimestampSignatures(options)!);
+        timestamp.ThrowIfInvalid();
+        Assert.NotNull(timestamp.TimeStampTime);
+        Assert.Equal(signature.FieldName, timestamp.FieldName);
+    }
+
+    /// <summary>
+    /// Verifies that a timestamp is rejected when its authority is not trusted, while the signature it
+    /// accompanies stays valid, confirming the two trust configurations are honoured independently.
+    /// </summary>
+    [Fact]
+    public void TimestampFromAnUntrustedAuthorityDoesNotInvalidateTheSignature()
+    {
+        using var document = PdfDocument.Open(GetSigningFixturePath("pdfs", "timestamped", "ecdsa-leaf-valid-p256.pdf"));
+
+        var options = new PdfSignatureVerificationOptions
+        {
+            SignatureTrust = new PdfCertificateTrustOptions
+            {
+                UseSystemStore = false,
+                RevocationMode = X509RevocationMode.NoCheck,
+                AdditionalTrustedRoots = [LoadFixtureCertificate("certs/ecdsa-root-valid-p384.cer")]
+            },
+            TimeStampTrust = new PdfCertificateTrustOptions
+            {
+                UseSystemStore = false,
+                RevocationMode = X509RevocationMode.NoCheck,
+
+                // Anchored on the signer's root, which the RSA timestamp authority does not chain to.
+                AdditionalTrustedRoots = [LoadFixtureCertificate("certs/ecdsa-root-valid-p384.cer")]
+            }
+        };
+
+        Assert.Single(document.GetSignatures(options)!).ThrowIfInvalid();
+
+        var timestamp = Assert.Single(document.GetTimestampSignatures(options)!);
+        Assert.False(timestamp.IsValid);
+        Assert.Equal(PdfSignatureError.TimeStampCertificateNotTrusted, timestamp.ValidationError);
     }
 
     private static PdfSignatureVerificationOptions CreateVerificationOptions(params string[] trustedRootRelativePaths)

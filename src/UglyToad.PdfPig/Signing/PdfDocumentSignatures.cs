@@ -14,11 +14,12 @@ using Core;
 
 internal static class PdfSignatureVerifier
 {
-    private const string CodeSigningEkuOid = "1.3.6.1.5.5.7.3.3";
-    private const string TimeStampingEkuOid = "1.3.6.1.5.5.7.3.8";
-    private const string Pkcs7DetachedSubFilter = "adbe.pkcs7.detached";
     private const string SigningTimeOid = "1.2.840.113549.1.9.5";
     private const string SignatureTimestampTokenOid = "1.2.840.113549.1.9.16.2.14";
+    private const string SigningCertificateOid = "1.2.840.113549.1.9.16.2.12";
+    private const string SigningCertificateV2Oid = "1.2.840.113549.1.9.16.2.47";
+    private const string Sha1Oid = "1.3.14.3.2.26";
+    private const string Sha256Oid = "2.16.840.1.101.3.4.2.1";
 
     /// <summary>
     /// Gets all embedded PDF signature results in stable AcroForm field-tree order.
@@ -88,7 +89,61 @@ internal static class PdfSignatureVerifier
             var signature = VerifySignatureField(field, field.SignatureValue, inputBytes, options);
             result.Add(signature);
         }
+
+        FlagContentAppendedAfterSigning(result, inputBytes.Length);
         return result;
+    }
+
+    /// <summary>
+    /// Marks otherwise valid signatures that leave trailing bytes uncovered.
+    /// </summary>
+    /// <remarks>
+    /// A signature covering less than the whole file is normal in a multiply-signed document, because
+    /// each later signature appends a revision the earlier ones cannot include. It is only benign when
+    /// some other signature reaches further into the file. When the outermost signature stops short of
+    /// the end, the remaining bytes were appended after every signature was applied and nothing vouches
+    /// for them, so reporting those signatures as valid would let a caller checking only
+    /// <see cref="PdfSignatureVerificationResult.IsValid"/> trust unsigned content.
+    /// </remarks>
+    private static void FlagContentAppendedAfterSigning(List<ParsedPdfSignature> signatures, long documentLength)
+    {
+        var furthestCoverage = 0L;
+
+        foreach (var signature in signatures)
+        {
+            if (signature.CoverageExtent > furthestCoverage)
+            {
+                furthestCoverage = signature.CoverageExtent.GetValueOrDefault();
+            }
+        }
+
+        if (furthestCoverage >= documentLength)
+        {
+            return;
+        }
+
+        for (var i = 0; i < signatures.Count; i++)
+        {
+            var signature = signatures[i];
+            var result = signature.SignatureVerificationResult;
+
+            // Signatures already reporting a failure keep their more specific error, and a signature
+            // superseded by one that reaches further into the file is covered by that later signature.
+            if (!result.IsValid || signature.CoverageExtent != furthestCoverage)
+            {
+                continue;
+            }
+
+            signatures[i] = signature.WithResult(new PdfSignatureVerificationResult(
+                PdfSignatureError.DocumentModifiedAfterSigning,
+                result.FieldName,
+                $"The document contains {documentLength - furthestCoverage} bytes appended after this signature was applied.",
+                result.Certificate,
+                result.SigningTime,
+                result.TimeStampTime,
+                result.CoversEntireDocument,
+                result.SubFilter));
+        }
     }
 
 
@@ -99,56 +154,77 @@ internal static class PdfSignatureVerifier
         PdfSignatureVerificationOptions options)
     {
         var fieldName = signatureField.Information.FullyQualifiedName ?? signatureField.Information.PartialName;
+        var subFilter = GetSubFilter(signatureValue.SubFilter);
 
-        if (!string.Equals(signatureValue.SubFilter, Pkcs7DetachedSubFilter, StringComparison.Ordinal))
+        // Everything below shares the field name and subfilter, and from the byte range onwards the
+        // coverage facts too, so results are built through these rather than repeating them.
+        var coversEntireDocument = false;
+        long? coverageExtent = null;
+
+        ParsedPdfSignature Invalid(
+            PdfSignatureError error,
+            string message,
+            X509Certificate2? certificate = null,
+            DateTimeOffset? signingTime = null,
+            PdfCertificateValidationFailedException? validationException = null) =>
+            ParsedPdfSignature.FromResult(
+                new PdfSignatureVerificationResult(
+                    error, fieldName, message, certificate, signingTime, null,
+                    coversEntireDocument, subFilter, validationException),
+                coverageExtent);
+
+        if (!IsSupported(subFilter))
         {
-            return ParsedPdfSignature.FromResult(CreateInvalidResult(
+            return Invalid(
                 PdfSignatureError.UnsupportedSubFilter,
-                fieldName,
-                $"Unsupported signature subfilter: {signatureValue.SubFilter ?? "<missing>"}."));
+                $"Unsupported signature subfilter: {signatureValue.SubFilter ?? "<missing>"}.");
         }
 
         if (!TryGetByteRange(signatureValue, pdfBytes.Length, out var byteRange, out var byteRangeErrorMessage))
         {
-            return ParsedPdfSignature.FromResult(CreateInvalidResult(
+            return Invalid(
                 byteRangeErrorMessage is null ? PdfSignatureError.ByteRangeMissing : PdfSignatureError.ByteRangeInvalid,
-                fieldName,
-                byteRangeErrorMessage ?? "The signature dictionary does not contain a /ByteRange entry."));
+                byteRangeErrorMessage ?? "The signature dictionary does not contain a /ByteRange entry.");
         }
-
-        var coversEntireDocument = byteRange.CoversEntireDocument(signatureValue.ContentsFieldValueLength, pdfBytes.Length);
 
         if (!TryGetContentsBytes(signatureValue, out var contentsBytes, out var contentsError))
         {
-            return ParsedPdfSignature.FromResult(CreateInvalidResult(
+            return Invalid(
                 contentsError ?? PdfSignatureError.ContentsMissing,
-                fieldName,
-                "The signature dictionary does not contain usable CMS contents.",
-                coversEntireDocument: coversEntireDocument));
+                "The signature dictionary does not contain usable CMS contents.");
         }
+
+        // The span excluded by /ByteRange must be exactly the /Contents value as it appears in the file.
+        // Checking only that the gap is the right size would let a document exclude a span unrelated to
+        // the CMS payload being verified, leaving room for unsigned content to hide inside the gap.
+        if (!byteRange.ExcludedSpanMatchesContents(pdfBytes, contentsBytes, signatureValue.ContentsFieldValueLength))
+        {
+            return Invalid(
+                PdfSignatureError.ByteRangeInvalid,
+                "The /ByteRange entry does not exclude exactly the /Contents value.");
+        }
+
+        coversEntireDocument = byteRange.CoversEntireDocument(pdfBytes.Length);
+
+        // The byte range is now known to delimit the /Contents value, so how far it reaches into the
+        // file is trustworthy even if the signature itself later fails to verify. Failures below still
+        // report this extent so a later revision can be recognised as covering an earlier signature.
+        coverageExtent = byteRange.Offset2 + byteRange.Length2;
 
         var signedContent = byteRange.ReadSignedContent(pdfBytes);
 
         if (!TryDecodeSignedCms(contentsBytes, signedContent, out var cms, out var cmsBytes))
         {
-            return ParsedPdfSignature.FromResult(CreateInvalidResult(
-                PdfSignatureError.CmsInvalid,
-                fieldName,
-                "The CMS payload could not be decoded.",
-                coversEntireDocument: coversEntireDocument));
+            return Invalid(PdfSignatureError.CmsInvalid, "The CMS payload could not be decoded.");
         }
 
         if (cms.SignerInfos.Count == 0)
         {
-            return ParsedPdfSignature.FromResult(CreateInvalidResult(
-                PdfSignatureError.SigningCertificateMissing,
-                fieldName,
-                "The CMS payload did not contain a signer.",
-                coversEntireDocument: coversEntireDocument));
+            return Invalid(PdfSignatureError.SigningCertificateMissing, "The CMS payload did not contain a signer.");
         }
 
         var signerInfo = cms.SignerInfos[0];
-        var signingTime = GetSigningTime(signerInfo);
+        var cmsSigningTime = GetSigningTime(signerInfo);
 
         try
         {
@@ -156,69 +232,313 @@ internal static class PdfSignatureVerifier
         }
         catch (CryptographicException)
         {
-            return ParsedPdfSignature.FromResult(CreateInvalidResult(
+            return Invalid(
                 PdfSignatureError.SignatureMismatch,
-                fieldName,
                 "The CMS signature did not validate against the PDF byte ranges.",
-                signerInfo.Certificate, signingTime,
-                coversEntireDocument: coversEntireDocument));
+                signerInfo.Certificate, cmsSigningTime);
         }
 
         var signingCertificate = signerInfo.Certificate;
         if (signingCertificate is null)
         {
-            return ParsedPdfSignature.FromResult(CreateInvalidResult(
+            return Invalid(
                 PdfSignatureError.SigningCertificateMissing,
-                fieldName,
                 "The CMS payload did not expose a signing certificate.",
-                null, signingTime,
-                coversEntireDocument: coversEntireDocument));
+                null, cmsSigningTime);
         }
 
-        if (!HasEnhancedKeyUsage(signingCertificate, CodeSigningEkuOid))
+        // CAdES requires the signed attributes to commit to the signing certificate, which stops a
+        // signature being re-presented with a different certificate carrying the same key. The
+        // attribute is honoured wherever it appears, but only demanded where the profile demands it.
+        var signingCertificateAttributeError = ValidateSigningCertificateAttribute(
+            signerInfo,
+            signingCertificate,
+            required: subFilter == PdfSignatureSubFilter.CAdESDetached);
+
+        if (signingCertificateAttributeError is not null)
         {
-            return ParsedPdfSignature.FromResult(CreateInvalidResult(
-                PdfSignatureError.EKUNotValidForSigning,
-                fieldName,
-                "The signing certificate does not have a document-signing EKU.",
-                signingCertificate, signingTime,
-                coversEntireDocument: coversEntireDocument));
+            return Invalid(PdfSignatureError.CmsInvalid, signingCertificateAttributeError, signingCertificate, cmsSigningTime);
         }
+
+        if (TryRunCertificateValidator(options.SignatureCertificateValidator, signingCertificate, subFilter, out var validatorException))
+        {
+            return Invalid(
+                PdfSignatureError.CertificateValidationFailed,
+                validatorException!.Message,
+                signingCertificate, cmsSigningTime, validatorException);
+        }
+
+        if (!TryGetSignerSignature(cmsBytes, out var signerSignature))
+        {
+            return Invalid(
+                PdfSignatureError.CmsInvalid,
+                "The CMS payload did not expose a signer signature value.",
+                signingCertificate, cmsSigningTime);
+        }
+
+        // The CMS signing time is a claim made by the signer's own key, so it cannot decide when the
+        // chain is validated: a holder of an expired or revoked certificate could otherwise backdate it
+        // and be trusted. Only an RFC 3161 token from a trusted authority establishes an earlier moment;
+        // without one the chain is validated as of now.
+        var trustedTime = GetTrustedTimeStampTime(signerInfo, signerSignature, subFilter, options);
 
         var chainError = ValidateCertificate(signingCertificate,
             cms.Certificates,
             options.SignatureTrust,
-            signingTime,
+            trustedTime,
             PdfSignatureError.SigningCertificateNotTrusted,
             PdfSignatureError.SigningCertificateRevoked,
             PdfSignatureError.SigningCertificateExpired);
         if (chainError is not null)
         {
-            return ParsedPdfSignature.FromResult(CreateInvalidResult(
+            return Invalid(
                 chainError.Value,
-                fieldName,
                 $"The signing certificate could not be trusted: {chainError.Value}.",
-                signingCertificate, signingTime,
-                coversEntireDocument: coversEntireDocument));
-        }
-
-        if (!TryGetSignerSignature(cmsBytes, out var signerSignature))
-        {
-            return ParsedPdfSignature.FromResult(CreateInvalidResult(
-                PdfSignatureError.CmsInvalid,
-                fieldName,
-                "The CMS payload did not expose a signer signature value.",
-                signingCertificate, signingTime,
-                coversEntireDocument: coversEntireDocument));
+                signingCertificate, cmsSigningTime);
         }
 
         return new ParsedPdfSignature(
-            CreateValidResult(fieldName, "The signature is valid.", signingCertificate, signingTime, null, coversEntireDocument),
+            new PdfSignatureVerificationResult(
+                null, fieldName, "The signature is valid.", signingCertificate, cmsSigningTime, null,
+                coversEntireDocument, subFilter),
             cms,
             signerInfo,
             signerSignature,
-            signingTime,
-            fieldName);
+            cmsSigningTime,
+            fieldName,
+            coverageExtent,
+            subFilter);
+    }
+
+    private static PdfSignatureSubFilter GetSubFilter(string? subFilter) => subFilter switch
+    {
+        "adbe.pkcs7.detached" => PdfSignatureSubFilter.Pkcs7Detached,
+        "ETSI.CAdES.detached" => PdfSignatureSubFilter.CAdESDetached,
+        "adbe.pkcs7.sha1" => PdfSignatureSubFilter.Pkcs7Sha1,
+        "adbe.x509.rsa_sha1" => PdfSignatureSubFilter.X509RsaSha1,
+        "ETSI.RFC3161" => PdfSignatureSubFilter.DocumentTimeStamp,
+        _ => PdfSignatureSubFilter.Unknown
+    };
+
+    /// <summary>
+    /// Both supported subfilters carry a detached CMS signature over the byte ranges and are verified
+    /// the same way, differing only in whether the signing-certificate attribute is mandatory.
+    /// </summary>
+    private static bool IsSupported(PdfSignatureSubFilter subFilter) =>
+        subFilter is PdfSignatureSubFilter.Pkcs7Detached or PdfSignatureSubFilter.CAdESDetached;
+
+    /// <summary>
+    /// Runs a certificate validator, returning <see langword="true"/> when it rejected the certificate.
+    /// </summary>
+    private static bool TryRunCertificateValidator(
+        ICertificateValidator? validator,
+        X509Certificate2 certificate,
+        PdfSignatureSubFilter subFilter,
+        out PdfCertificateValidationFailedException? exception)
+    {
+        exception = null;
+
+        if (validator is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            validator.ValidateCertificate(certificate, subFilter);
+            return false;
+        }
+        catch (PdfCertificateValidationFailedException ex)
+        {
+            exception = ex;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Verifies the ESS signing-certificate signed attribute, which binds the certificate the signer
+    /// intended into the signed data. Returns an error message, or <see langword="null"/> when the
+    /// attribute is absent and not required, or present and correct.
+    /// </summary>
+    private static string? ValidateSigningCertificateAttribute(
+        SignerInfo signerInfo,
+        X509Certificate2 certificate,
+        bool required)
+    {
+        foreach (var attribute in signerInfo.SignedAttributes)
+        {
+            var isV2 = string.Equals(attribute.Oid.Value, SigningCertificateV2Oid, StringComparison.Ordinal);
+
+            if (!isV2 && !string.Equals(attribute.Oid.Value, SigningCertificateOid, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (attribute.Values.Count == 0)
+            {
+                return "The signing certificate attribute is empty.";
+            }
+
+            if (!TryReadSigningCertificateHash(attribute.Values[0].RawData, isV2, out var algorithmOid, out var expectedHash))
+            {
+                return "The signing certificate attribute could not be decoded.";
+            }
+
+            if (!TryComputeDigest(algorithmOid, certificate.RawData, out var actualHash))
+            {
+                return $"Unsupported signing certificate attribute digest algorithm: {algorithmOid}.";
+            }
+
+            return expectedHash.AsSpan().SequenceEqual(actualHash)
+                ? null
+                : "The signing certificate attribute does not match the certificate that signed the document.";
+        }
+
+        return required
+            ? "The signature does not carry the signing certificate attribute its subfilter requires."
+            : null;
+    }
+
+    /// <summary>
+    /// Reads the first certificate hash out of an ESS <c>SigningCertificate</c> or
+    /// <c>SigningCertificateV2</c> attribute value.
+    /// </summary>
+    private static bool TryReadSigningCertificateHash(
+        byte[] rawAttributeValue,
+        bool isV2,
+        out string algorithmOid,
+        [NotNullWhen(true)] out byte[]? hash)
+    {
+        // SigningCertificate[V2] ::= SEQUENCE { certs SEQUENCE OF ESSCertID[V2], policies ... OPTIONAL }
+        // ESSCertID              ::= SEQUENCE { certHash OCTET STRING, issuerSerial ... OPTIONAL }
+        // ESSCertIDv2            ::= SEQUENCE { hashAlgorithm ... DEFAULT sha256, certHash OCTET STRING, ... }
+        algorithmOid = Sha1Oid;
+        hash = null;
+
+        try
+        {
+            var certs = new AsnReader(rawAttributeValue, AsnEncodingRules.BER).ReadSequence().ReadSequence();
+            var certId = certs.ReadSequence();
+
+            if (isV2)
+            {
+                // The algorithm identifier is omitted when it is the SHA-256 default, in which case the
+                // first element is the hash itself.
+                if (certId.PeekTag().HasSameClassAndValue(Asn1Tag.Sequence))
+                {
+                    var algorithm = certId.ReadSequence();
+                    algorithmOid = algorithm.ReadObjectIdentifier();
+                }
+                else
+                {
+                    algorithmOid = Sha256Oid;
+                }
+            }
+
+            hash = certId.ReadOctetString();
+            return true;
+        }
+        catch (AsnContentException)
+        {
+            return false;
+        }
+        catch (CryptographicException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Returns the generation time of the first embedded RFC 3161 token that both commits to this
+    /// signature value and builds to a trusted timestamp authority, or <see langword="null"/> when the
+    /// signature carries no such token.
+    /// </summary>
+    private static DateTimeOffset? GetTrustedTimeStampTime(
+        SignerInfo signerInfo,
+        byte[] signerSignature,
+        PdfSignatureSubFilter subFilter,
+        PdfSignatureVerificationOptions options)
+    {
+        foreach (var unsignedAttribute in signerInfo.UnsignedAttributes)
+        {
+            if (!string.Equals(unsignedAttribute.Oid.Value, SignatureTimestampTokenOid, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            foreach (var value in unsignedAttribute.Values)
+            {
+                if (TryGetVerifiedTimeStampTime(value.RawData, signerSignature, subFilter, options, out var generationTime))
+                {
+                    return generationTime;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryGetVerifiedTimeStampTime(
+        byte[] rawTimestampToken,
+        byte[] signerSignature,
+        PdfSignatureSubFilter subFilter,
+        PdfSignatureVerificationOptions options,
+        out DateTimeOffset generationTime)
+    {
+        generationTime = default;
+
+        SignedCms timestampCms;
+
+        try
+        {
+            timestampCms = new SignedCms();
+            timestampCms.Decode(rawTimestampToken);
+
+            if (timestampCms.SignerInfos.Count == 0)
+            {
+                return false;
+            }
+
+            timestampCms.CheckSignature(true);
+        }
+        catch (Exception ex) when (ex is CryptographicException or AsnContentException)
+        {
+            return false;
+        }
+
+        if (!TryParseTimestampInfo(timestampCms.ContentInfo.Content, out var timestampInfo) ||
+            !TryComputeDigest(timestampInfo.HashAlgorithmOid, signerSignature, out var expectedMessageImprint) ||
+            !timestampInfo.MessageImprint.AsSpan().SequenceEqual(expectedMessageImprint))
+        {
+            return false;
+        }
+
+        var timestampCertificate = timestampCms.SignerInfos[0].Certificate;
+
+        if (timestampCertificate is null ||
+            TryRunCertificateValidator(options.TimeStampCertificateValidator, timestampCertificate, subFilter, out _))
+        {
+            return false;
+        }
+
+        // The authority's chain is validated as of the moment it issued the token, which is what a
+        // timestamp is for: the certificate is expected to age out while the token stays meaningful.
+        var chainError = ValidateCertificate(
+            timestampCertificate,
+            timestampCms.Certificates,
+            options.TimeStampTrust,
+            timestampInfo.GenerationTime,
+            PdfSignatureError.TimeStampCertificateNotTrusted,
+            PdfSignatureError.TimeStampCertificateRevoked,
+            PdfSignatureError.TimeStampCertificateExpired);
+
+        if (chainError is not null)
+        {
+            return false;
+        }
+
+        generationTime = timestampInfo.GenerationTime;
+        return true;
     }
 
     private static List<PdfSignatureVerificationResult> GetTimestampResults(
@@ -331,16 +651,19 @@ internal static class PdfSignatureVerifier
                 coversEntireDocument);
         }
 
-        if (!HasEnhancedKeyUsage(timestampCertificate, TimeStampingEkuOid))
+        if (TryRunCertificateValidator(
+                options.TimeStampCertificateValidator, timestampCertificate, parsedSignature.SubFilter, out var validatorException))
         {
             return CreateInvalidResult(
-                PdfSignatureError.TimeStampCertificateNotTrusted,
+                PdfSignatureError.CertificateValidationFailed,
                 parsedSignature.FieldName,
-                "The TSA certificate does not have the timeStamping EKU.",
+                validatorException!.Message,
                 timestampCertificate, parsedSignature.SigningTime, timestampInfo.GenerationTime,
-                coversEntireDocument);
+                coversEntireDocument, parsedSignature.SubFilter, validatorException);
         }
 
+        // As of the moment the token was issued: a timestamp is expected to outlive the authority's
+        // certificate, so validating it as of now would reject every archived timestamp.
         var chainError = ValidateCertificate(
             timestampCertificate, timestampCms.Certificates, options.TimeStampTrust, timestampInfo.GenerationTime,
             PdfSignatureError.TimeStampCertificateNotTrusted, PdfSignatureError.TimeStampCertificateRevoked, PdfSignatureError.TimeStampCertificateExpired);
@@ -668,12 +991,6 @@ internal static class PdfSignatureVerifier
     private static bool HasSameThumbprint(X509Certificate2 left, X509Certificate2 right) =>
         string.Equals(left.Thumbprint, right.Thumbprint, StringComparison.OrdinalIgnoreCase);
 
-    private static bool HasEnhancedKeyUsage(X509Certificate2 certificate, string requiredOid) =>
-        certificate.Extensions
-            .OfType<X509EnhancedKeyUsageExtension>()
-            .SelectMany(x => x.EnhancedKeyUsages.Cast<Oid>())
-            .Any(x => string.Equals(x.Value, requiredOid, StringComparison.Ordinal));
-
     private static DateTimeOffset? GetSigningTime(SignerInfo signerInfo)
     {
         foreach (var signedAttribute in signerInfo.SignedAttributes)
@@ -780,23 +1097,172 @@ internal static class PdfSignatureVerifier
         X509Certificate2? certificate = null,
         DateTimeOffset? signingTime = null,
         DateTimeOffset? timestampTime = null,
-        bool coversEntireDocument = false)
+        bool coversEntireDocument = false,
+        PdfSignatureSubFilter subFilter = PdfSignatureSubFilter.Unknown,
+        PdfCertificateValidationFailedException? certificateValidationException = null)
     {
-        return new PdfSignatureVerificationResult(error, fieldName, message, certificate, signingTime, timestampTime, coversEntireDocument);
+        return new PdfSignatureVerificationResult(
+            error, fieldName, message, certificate, signingTime, timestampTime, coversEntireDocument,
+            subFilter, certificateValidationException);
     }
 
-    private static PdfSignatureVerificationResult CreateValidResult(string? fieldName, string message, X509Certificate2? certificate, DateTimeOffset? signingTime, DateTimeOffset? timestampTime, bool coversEntireDocument = false)
+    private static PdfSignatureVerificationResult CreateValidResult(
+        string? fieldName,
+        string message,
+        X509Certificate2? certificate,
+        DateTimeOffset? signingTime,
+        DateTimeOffset? timestampTime,
+        bool coversEntireDocument = false,
+        PdfSignatureSubFilter subFilter = PdfSignatureSubFilter.Unknown)
     {
-        return new PdfSignatureVerificationResult(null, fieldName, message, certificate, signingTime, timestampTime, coversEntireDocument);
+        return new PdfSignatureVerificationResult(
+            null, fieldName, message, certificate, signingTime, timestampTime, coversEntireDocument, subFilter);
     }
 
     private readonly record struct SignatureByteRange(long Offset1, int Length1, long Offset2, int Length2)
     {
-        public bool CoversEntireDocument(long signatureFieldLength, long documentLength)
+        public bool CoversEntireDocument(long documentLength)
         {
-            return Offset1 == 0 &&
-                   Length1 + signatureFieldLength == Offset2 &&
-                   Offset2 + Length2 == documentLength;
+            // The excluded span is separately verified to be exactly the /Contents value, so the
+            // document is fully covered when the signed spans run from the first byte to the last.
+            return Offset1 == 0 && Offset2 + Length2 == documentLength;
+        }
+
+        /// <summary>
+        /// Checks that the bytes skipped between the two signed spans are exactly the <c>/Contents</c>
+        /// value, delimiters included, and that they encode <paramref name="contents"/>.
+        /// </summary>
+        public bool ExcludedSpanMatchesContents(IInputBytes inputBytes, ReadOnlySpan<byte> contents, int contentsFieldValueLength)
+        {
+            var start = Offset1 + Length1;
+            var length = Offset2 - start;
+
+            if (length < 2 || length > int.MaxValue)
+            {
+                return false;
+            }
+
+            var excluded = new byte[(int)length];
+            var originalOffset = inputBytes.CurrentOffset;
+
+            try
+            {
+                inputBytes.Seek(start);
+                if (inputBytes.Read(excluded) != excluded.Length)
+                {
+                    return false;
+                }
+            }
+            finally
+            {
+                inputBytes.Seek(originalOffset);
+            }
+
+            var span = TrimWhitespace(excluded);
+
+            if (span.Length < 2)
+            {
+                return false;
+            }
+
+            if (span[0] == '<' && span[span.Length - 1] == '>')
+            {
+                return HexDigitsMatch(span.Slice(1, span.Length - 2), contents);
+            }
+
+            // Literal string contents are vanishingly rare and their escape rules make an exact
+            // comparison impractical here, so fall back to the length recorded when the token was read.
+            if (span[0] == '(' && span[span.Length - 1] == ')')
+            {
+                return span.Length == contentsFieldValueLength;
+            }
+
+            return false;
+        }
+
+        private static ReadOnlySpan<byte> TrimWhitespace(ReadOnlySpan<byte> value)
+        {
+            var start = 0;
+            var end = value.Length;
+
+            while (start < end && ReadHelper.IsWhitespace(value[start]))
+            {
+                start++;
+            }
+
+            while (end > start && ReadHelper.IsWhitespace(value[end - 1]))
+            {
+                end--;
+            }
+
+            return value.Slice(start, end - start);
+        }
+
+        private static bool HexDigitsMatch(ReadOnlySpan<byte> hexDigits, ReadOnlySpan<byte> expected)
+        {
+            var index = 0;
+            var highNibble = -1;
+
+            foreach (var value in hexDigits)
+            {
+                if (ReadHelper.IsWhitespace(value))
+                {
+                    continue;
+                }
+
+                var nibble = GetHexNibble(value);
+                if (nibble < 0)
+                {
+                    return false;
+                }
+
+                if (highNibble < 0)
+                {
+                    highNibble = nibble;
+                    continue;
+                }
+
+                if (index >= expected.Length || expected[index] != (byte)((highNibble << 4) | nibble))
+                {
+                    return false;
+                }
+
+                index++;
+                highNibble = -1;
+            }
+
+            if (highNibble >= 0)
+            {
+                // A trailing odd hex digit is treated as if followed by a zero, as per 7.3.4.3.
+                if (index >= expected.Length || expected[index] != (byte)(highNibble << 4))
+                {
+                    return false;
+                }
+
+                index++;
+            }
+
+            return index == expected.Length;
+        }
+
+        private static int GetHexNibble(byte value)
+        {
+            if (value >= '0' && value <= '9')
+            {
+                return value - '0';
+            }
+
+            if (value >= 'A' && value <= 'F')
+            {
+                return value - 'A' + 10;
+            }
+
+            if (value >= 'a' && value <= 'f')
+            {
+                return value - 'a' + 10;
+            }
+
+            return -1;
         }
 
         public byte[] ReadSignedContent(IInputBytes inputBytes)
@@ -844,7 +1310,26 @@ internal static class PdfSignatureVerifier
 
         public string? FieldName { get; }
 
-        public ParsedPdfSignature(PdfSignatureVerificationResult result, SignedCms? cms, SignerInfo? signerInfo, byte[]? signerSignature, DateTimeOffset? signingTime, string? fieldName)
+        /// <summary>
+        /// The offset one past the last document byte this signature covers, or <see langword="null"/>
+        /// when the byte range could not be established.
+        /// </summary>
+        public long? CoverageExtent { get; }
+
+        /// <summary>
+        /// The encoding of the signature, carried so attached timestamps can report it too.
+        /// </summary>
+        public PdfSignatureSubFilter SubFilter { get; }
+
+        public ParsedPdfSignature(
+            PdfSignatureVerificationResult result,
+            SignedCms? cms,
+            SignerInfo? signerInfo,
+            byte[]? signerSignature,
+            DateTimeOffset? signingTime,
+            string? fieldName,
+            long? coverageExtent = null,
+            PdfSignatureSubFilter subFilter = PdfSignatureSubFilter.Unknown)
         {
             SignatureVerificationResult = result;
             Cms = cms;
@@ -852,11 +1337,20 @@ internal static class PdfSignatureVerifier
             SignerSignature = signerSignature;
             SigningTime = signingTime;
             FieldName = fieldName;
+            CoverageExtent = coverageExtent;
+            SubFilter = subFilter;
         }
 
-        public static ParsedPdfSignature FromResult(PdfSignatureVerificationResult result)
+        public static ParsedPdfSignature FromResult(PdfSignatureVerificationResult result, long? coverageExtent = null)
         {
-            return new ParsedPdfSignature(result, null, null, null, result.SigningTime, result.FieldName);
+            return new ParsedPdfSignature(
+                result, null, null, null, result.SigningTime, result.FieldName, coverageExtent, result.SubFilter);
+        }
+
+        public ParsedPdfSignature WithResult(PdfSignatureVerificationResult result)
+        {
+            return new ParsedPdfSignature(
+                result, Cms, SignerInfo, SignerSignature, SigningTime, FieldName, CoverageExtent, SubFilter);
         }
     }
 

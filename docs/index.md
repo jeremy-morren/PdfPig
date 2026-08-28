@@ -34,48 +34,52 @@ PdfPig provides access to the letters on each page in a PDF. This can be used to
 
 To open a PDF document and read the letters, words and images:
 
-    using System.Collections.Generic;
-    using System.Linq;
-    using UglyToad.PdfPig;
-    using UglyToad.PdfPig.Content;
+```csharp
+using System.Collections.Generic;
+using System.Linq;
+using UglyToad.PdfPig;
+using UglyToad.PdfPig.Content;
 
-    public static class Program
+public static class Program
+{
+    public static void Main()
     {
-        public static void Main()
+        using (PdfDocument document = PdfDocument.Open(@"C:\path\to\pdffile\file.pdf"))
         {
-            using (PdfDocument document = PdfDocument.Open(@"C:\path\to\pdffile\file.pdf"))
+            foreach (Page page in document.GetPages())
             {
-                foreach (Page page in document.GetPages())
-                {
-                    IReadOnlyList<Letter> letters = page.Letters;
-                    string example = string.Join(string.Empty, letters.Select(x => x.Value));
+                IReadOnlyList<Letter> letters = page.Letters;
+                string example = string.Join(string.Empty, letters.Select(x => x.Value));
 
-                    IEnumerable<Word> words = page.GetWords();
+                IEnumerable<Word> words = page.GetWords();
 
-                    IEnumerable<IPdfImage> images = page.GetImages();
-                }
+                IEnumerable<IPdfImage> images = page.GetImages();
             }
         }
     }
+}
+```
 
 For password protected PDF documents you can provide a set of passwords using the parsing options class:
 
-    ParsingOptions parsingOptions = new ParsingOptions
-    {
-        Passwords = new List<string> {"a password", "password123"}
-    };
+```csharp
+ParsingOptions parsingOptions = new ParsingOptions
+{
+    Passwords = new List<string> {"a password", "password123"}
+};
 
-    using (PdfDocument document = PdfDocument.Open(@"C:\path\to\pdffile\file.pdf", parsingOptions))
+using (PdfDocument document = PdfDocument.Open(@"C:\path\to\pdffile\file.pdf", parsingOptions))
+{
+    // Get the title from the document metadata.
+    Console.WriteLine(document.Information.Title);
+            
+    foreach (Page page in document.GetPages())
     {
-        // Get the title from the document metadata.
-        Console.WriteLine(document.Information.Title);
-                
-        foreach (Page page in document.GetPages())
-        {
-            IReadOnlyList<Letter> letters = page.Letters;
-            Console.WriteLine(letters.Count);
-        }
+        IReadOnlyList<Letter> letters = page.Letters;
+        Console.WriteLine(letters.Count);
     }
+}
+```
 
 This also shows accessing document metadata using the `document.Information` property. All metadata is optional according to the specification so all entries can be `null`.
 
@@ -89,32 +93,34 @@ The image below shows an example of the letter (teal) and word (pink) bounding b
 
 PdfPig can be used to make a PDF document in C# and other .NET languages. At the moment the API supports drawing letters and paths. The code snippet shows creating a new PDF document with 1 A4 page and writing some text on that page in Helvetica before saving the file to `C:\temp\file.pdf`:
 
-    using System.IO;
-    using UglyToad.PdfPig.Content;
-    using UglyToad.PdfPig.Core;
-    using UglyToad.PdfPig.Fonts.Standard14Fonts;
-    using UglyToad.PdfPig.Writer;
+```csharp
+using System.IO;
+using UglyToad.PdfPig.Content;
+using UglyToad.PdfPig.Core;
+using UglyToad.PdfPig.Fonts.Standard14Fonts;
+using UglyToad.PdfPig.Writer;
 
-    public static class Program
+public static class Program
+{
+    public static void Main()
     {
-        public static void Main()
-        {
-            PdfDocumentBuilder builder = new PdfDocumentBuilder();
+        PdfDocumentBuilder builder = new PdfDocumentBuilder();
 
-            PdfDocumentBuilder.AddedFont helvetica = builder.AddStandard14Font(Standard14Font.Helvetica);
-            PdfDocumentBuilder.AddedFont helveticaBold = builder.AddStandard14Font(Standard14Font.HelveticaBold);
+        PdfDocumentBuilder.AddedFont helvetica = builder.AddStandard14Font(Standard14Font.Helvetica);
+        PdfDocumentBuilder.AddedFont helveticaBold = builder.AddStandard14Font(Standard14Font.HelveticaBold);
 
-            PdfPageBuilder page = builder.AddPage(PageSize.A4);
+        PdfPageBuilder page = builder.AddPage(PageSize.A4);
 
-            PdfPoint closeToTop = new PdfPoint(15, page.PageSize.Top - 25);
+        PdfPoint closeToTop = new PdfPoint(15, page.PageSize.Top - 25);
 
-            page.AddText("My first PDF document!", 12, closeToTop, helvetica);
+        page.AddText("My first PDF document!", 12, closeToTop, helvetica);
 
-            page.AddText("Hello World!", 10, closeToTop.Translate(0, -15), helveticaBold);
+        page.AddText("Hello World!", 10, closeToTop.Translate(0, -15), helveticaBold);
 
-            File.WriteAllBytes(@"C:\temp\file.pdf", builder.Build());
-        }
+        File.WriteAllBytes(@"C:\temp\file.pdf", builder.Build());
     }
+}
+```
 
 The output is a file with the text "My first PDF document!" and then "Hello World!". Since PDF coordinates run from the bottom of the page upwards the Y coordinate of the top of the page is higher than 0 and the bottom of the page has a Y value of 0. The output file is shown below in Chrome's PDF viewer:
 
@@ -134,58 +140,60 @@ See the [document creation](https://github.com/UglyToad/PdfPig/wiki/Document-Cre
 
 The `PdfDocument` provides access to XMP format metadata, AcroForms, Embedded files used by file annotations, bookmarks indicating the internal structure of the document and much more. Some examples are shown in the code sample:
 
-    using System;
-    using System.Collections.Generic;
-    using System.Xml.Linq;
-    using UglyToad.PdfPig;
-    using UglyToad.PdfPig.AcroForms;
-    using UglyToad.PdfPig.AcroForms.Fields;
-    using UglyToad.PdfPig.Content;
-    using UglyToad.PdfPig.Outline;
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Xml.Linq;
+using UglyToad.PdfPig;
+using UglyToad.PdfPig.AcroForms;
+using UglyToad.PdfPig.AcroForms.Fields;
+using UglyToad.PdfPig.Content;
+using UglyToad.PdfPig.Outline;
 
-    public static class Program
+public static class Program
+{
+    public static void Main()
     {
-        public static void Main()
+        using (PdfDocument document = PdfDocument.Open(@"C:\temp\file.pdf"))
         {
-            using (PdfDocument document = PdfDocument.Open(@"C:\temp\file.pdf"))
-            {
-                Console.WriteLine($"Document has {document.NumberOfPages} pages.");
+            Console.WriteLine($"Document has {document.NumberOfPages} pages.");
 
-                if (document.TryGetForm(out AcroForm form))
+            if (document.TryGetForm(out AcroForm form))
+            {
+                foreach (AcroFieldBase field in form.GetFieldsForPage(1))
                 {
-                    foreach (AcroFieldBase field in form.GetFieldsForPage(1))
+                    switch (field)
                     {
-                        switch (field)
-                        {
-                            case AcroCheckboxField cb:
-                                if (cb.IsChecked)
-                                {
-                                    Console.WriteLine($"Checkbox was checked: {cb.Information.MappingName}.");
-                                }
-                                break;
-                        }
+                        case AcroCheckboxField cb:
+                            if (cb.IsChecked)
+                            {
+                                Console.WriteLine($"Checkbox was checked: {cb.Information.MappingName}.");
+                            }
+                            break;
                     }
                 }
+            }
 
-                if (document.TryGetXmpMetadata(out XmpMetadata metadata))
-                {
-                    XDocument xmp = metadata.GetXDocument();
-                }
-                
-                if (document.TryGetBookmarks(out Bookmarks bookmarks))
-                {
-                    Console.WriteLine($"Document contained bookmarks with {bookmarks.Roots.Count} root nodes.");
-                }
+            if (document.TryGetXmpMetadata(out XmpMetadata metadata))
+            {
+                XDocument xmp = metadata.GetXDocument();
+            }
+            
+            if (document.TryGetBookmarks(out Bookmarks bookmarks))
+            {
+                Console.WriteLine($"Document contained bookmarks with {bookmarks.Roots.Count} root nodes.");
+            }
 
-                Console.WriteLine($"Document uses version {document.Version} of the PDF specification.");
+            Console.WriteLine($"Document uses version {document.Version} of the PDF specification.");
 
-                if (document.Advanced.TryGetEmbeddedFiles(out IReadOnlyList<EmbeddedFile> embeddedFiles))
-                {
-                    Console.WriteLine($"Document contains {embeddedFiles.Count} embedded files.");
-                }
+            if (document.Advanced.TryGetEmbeddedFiles(out IReadOnlyList<EmbeddedFile> embeddedFiles))
+            {
+                Console.WriteLine($"Document contains {embeddedFiles.Count} embedded files.");
             }
         }
     }
+}
+```
 
 ## Document Layout Analysis ##
 

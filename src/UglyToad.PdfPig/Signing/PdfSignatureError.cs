@@ -36,9 +36,10 @@ public enum PdfSignatureError
     ContentsInvalid,
 
     /// <summary>
-    /// The signer certificate did not declare an enhanced key usage suitable for document signing.
+    /// The configured <see cref="ICertificateValidator"/> rejected the certificate. The exception it
+    /// threw is available on <see cref="PdfSignatureVerificationResult.CertificateValidationException"/>.
     /// </summary>
-    EKUNotValidForSigning,
+    CertificateValidationFailed,
 
     /// <summary>
     /// The CMS payload could not be decoded or was structurally invalid.
@@ -49,6 +50,12 @@ public enum PdfSignatureError
     /// The detached CMS signature did not validate against the signed PDF byte ranges.
     /// </summary>
     SignatureMismatch,
+
+    /// <summary>
+    /// The signature itself is cryptographically sound, but the document contains bytes beyond the
+    /// span it covers and no other signature covers them, so content was appended after signing.
+    /// </summary>
+    DocumentModifiedAfterSigning,
 
     /// <summary>
     /// The CMS payload did not contain a usable signing certificate.

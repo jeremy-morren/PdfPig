@@ -346,7 +346,9 @@ The fields can be accessed using the `AcroForm`'s `Fields` property. Since the f
 
 Please note the forms are readonly and values cannot be changed or added using PdfPig.
 
-A draft design for future PDF signing support is available in [docs/pdf-signing.md](docs/pdf-signing.md).
+### Digital Signatures
+
+PdfPig can add digital signatures to existing documents (`PdfSigner.SignAsync` with your own `IPdfSignatureProvider` implementation) and verify embedded signatures and RFC 3161 timestamps (`document.GetSignatures()` / `document.GetTimestampSignatures()`). See [Digital Signatures](docs/Signing.md) for a full guide.
 
 ### Hyperlinks
 

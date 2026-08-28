@@ -3,3 +3,6 @@
 *.bin binary
 *.pdf binary
 *.ttf binary
+
+*.cer binary
+*.pfx binary

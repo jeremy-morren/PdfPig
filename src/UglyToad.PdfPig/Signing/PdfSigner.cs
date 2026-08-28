@@ -98,6 +98,13 @@ public static class PdfSigner
 
     private static void ValidateOptions(PdfDocument document, PdfSignatureOptions options)
     {
+        if (document.IsEncrypted)
+        {
+            // The appended revision is written in the clear and the new trailer carries no /Encrypt
+            // entry, so signing an encrypted document would produce a file no reader can interpret.
+            throw new NotSupportedException("Signing encrypted documents is not supported.");
+        }
+
         if (string.IsNullOrWhiteSpace(options.FieldName))
         {
             throw new ArgumentException("A non-empty signature field name must be provided.", nameof(options));
